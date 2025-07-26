@@ -1,2232 +1,497 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Keii Portillo - Fotografía</title>
-    <link rel="icon" type="image/jpeg" href="https://archive.org/download/logo-01-02-01/logo-01-02-01.jpg" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      body {
-        font-family: 'Inter', sans-serif;
-        background-color: #606060;
-      }
-      @import url('https://rsms.me/inter/inter.css');
 
-      @keyframes fade-in-right {
-        from {
-          opacity: 0;
-          transform: translateX(100%);
-        }
-        to {
-          opacity: 1;
-          transform: translateX(0);
-        }
-      }
-      .animate-fade-in-right {
-        animation: fade-in-right 0.5s ease-out forwards;
-      }
-      
-      /* Custom scrollbar hiding utility */
-      .no-scrollbar::-webkit-scrollbar {
-          display: none;
-      }
-      .no-scrollbar {
-          -ms-overflow-style: none;  /* IE and Edge */
-          scrollbar-width: none;  /* Firefox */
-      }
-    </style>
-    <!-- Dependencies -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body class="text-zinc-200">
-    <div id="root"></div>
-    <script type="text/babel" data-presets="react">
-    // All React/JS code will be placed here and transpiled by Babel on the fly.
-    // NOTE: This is not efficient for large-scale production but is perfect for embedding in sites like Google Sites.
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { Session, SessionStatus, Payment } from '../types';
+import { useApp } from '../contexts/AppContext';
+import AddPaymentModal from './AddPaymentModal';
+import ConfirmationModal from './ConfirmationModal';
+import EditSessionModal from './EditSessionModal';
 
-    // --- From lib/supabase.ts ---
-    const supabaseUrl = 'https://bfxybfznjhwhrlqbsidd.supabase.co';
-    const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmeHliZnpuamh3aHJscWJzaWRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTQzNzIsImV4cCI6MjA2ODQzMDM3Mn0._z9lAjmWmMP50evoW7B32AutgBV-Wsn87vEbQcfiF5c';
-    if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error('Supabase URL and Anon Key must be provided.');
+interface SessionCardProps {
+    session: Session;
+}
+
+const formatDate = (dateString: string | null) => {
+    if (!dateString) return 'Fecha pendiente';
+    // Use T00:00:00 to treat the date as local, avoiding timezone shifts.
+    return new Date(dateString + 'T00:00:00').toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric'
+    });
+};
+
+const formatPaymentDate = (dateString: string) => {
+    return new Date(dateString + 'T00:00:00').toLocaleDateString('es-AR', {
+        day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+}
+
+const getSessionState = (session: Session) => {
+    const now = new Date();
+
+    if (session.status === SessionStatus.CANCELLED) {
+        return { text: 'Cancelada', color: 'text-red-400 bg-red-900/50', borderColor: 'border-red-500/50' };
     }
-    const { createClient } = supabase;
-    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-
-
-    // --- From types.ts ---
-    const PaymentMethod = {
-        TRANSFER: 'Transferencia',
-        CARD: 'Tarjeta',
-        CASH: 'Efectivo',
-    };
-
-    const ClientOrigin = {
-        INSTAGRAM: 'Instagram',
-        FACEBOOK: 'Facebook',
-        TIKTOK: 'TikTok',
-        WHATSAPP: 'WhatsApp',
-    };
-
-    const SessionStatus = {
-        ACTIVE: 'active',
-        CANCELLED: 'cancelled',
-    };
-
-    const View = {
-        DASHBOARD: 'DASHBOARD',
-        FINISHED: 'FINISHED',
-        CANCELLED: 'CANCELLED',
-        PLANNER: 'PLANNER',
-        SETTINGS: 'SETTINGS',
-    };
-
-
-    // --- From constants.ts ---
-    const ALL_CLIENT_ORIGINS = [
-        ClientOrigin.INSTAGRAM,
-        ClientOrigin.FACEBOOK,
-        ClientOrigin.TIKTOK,
-        ClientOrigin.WHATSAPP,
-    ];
-
-
-    // --- From contexts/AppContext.tsx ---
-    const AppContext = React.createContext(undefined);
-
-    const AppProvider = ({ children }) => {
-        const [sessions, setSessions] = React.useState([]);
-        const [prices, setPrices] = React.useState({});
-        const [serviceTypes, setServiceTypes] = React.useState([]);
-        const [isLoading, setIsLoading] = React.useState(true);
-        const [error, setError] = React.useState(null);
-        const [notifications, setNotifications] = React.useState([]);
-
-        const addNotification = React.useCallback((message, type) => {
-            const id = `${new Date().getTime()}-${Math.random()}`;
-            setNotifications(prev => [...prev, { id, message, type }]);
-            setTimeout(() => {
-                setNotifications(prev => prev.filter(n => n.id !== id));
-            }, 5000);
-        }, []);
-
-        const fetchAllData = React.useCallback(async () => {
-            setIsLoading(true);
-            setError(null);
-            try {
-                const [servicesRes, sessionsRes, paymentsRes] = await Promise.all([
-                    supabaseClient.from('services').select('name, price'),
-                    supabaseClient.from('sessions').select('*'),
-                    supabaseClient.from('payments').select('*')
-                ]);
-
-                if (servicesRes.error) throw servicesRes.error;
-                if (sessionsRes.error) throw sessionsRes.error;
-                if (paymentsRes.error) throw paymentsRes.error;
-
-                const fetchedPrices = {};
-                const fetchedServiceTypes = [];
-                for (const service of servicesRes.data) {
-                    fetchedPrices[service.name] = Number(service.price);
-                    fetchedServiceTypes.push(service.name);
-                }
-                setPrices(fetchedPrices);
-                setServiceTypes(fetchedServiceTypes);
-
-                const paymentsBySessionId = new Map();
-                for (const payment of paymentsRes.data) {
-                    const existing = paymentsBySessionId.get(payment.session_id) || [];
-                    paymentsBySessionId.set(payment.session_id, [...existing, payment]);
-                }
-                
-                const fetchedSessions = sessionsRes.data.map(session => ({
-                    ...session,
-                    payments: (paymentsBySessionId.get(session.id) || []).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-                }));
-
-                setSessions(fetchedSessions.sort((a, b) => {
-                    if (a.date === null && b.date !== null) return 1;
-                    if (a.date !== null && b.date === null) return -1;
-                    if (a.date === null && b.date === null) return 0;
-                    return new Date(a.date).getTime() - new Date(b.date).getTime()
-                }));
-
-            } catch (err) {
-                console.error("Error fetching data from Supabase:", err);
-                setError(`Error al cargar los datos: ${err.message}`);
-            } finally {
-                setIsLoading(false);
-            }
-        }, []);
-
-        React.useEffect(() => {
-            fetchAllData();
-        }, [fetchAllData]);
-
-        const addSession = React.useCallback(async (
-            sessionData, 
-            initialPayment
-        ) => {
-            const sessionPrice = prices[sessionData.service_type] || 0;
-            const newSessionForDB = { 
-                ...sessionData, 
-                price: sessionPrice, 
-                status: SessionStatus.ACTIVE,
-                is_rescheduled: false,
-                is_relocated: false,
-                is_time_changed: false
-            };
-
-            const { data: insertedSession, error: sessionError } = await supabaseClient.from('sessions').insert(newSessionForDB).select().single();
-            if (sessionError) throw sessionError;
-
-            const newPaymentForDB = { ...initialPayment, session_id: insertedSession.id };
-            const { data: insertedPayment, error: paymentError } = await supabaseClient.from('payments').insert(newPaymentForDB).select().single();
-            
-            if (paymentError) {
-                await supabaseClient.from('sessions').delete().eq('id', insertedSession.id);
-                throw paymentError;
-            }
-            
-            await fetchAllData(); 
-            addNotification('Sesión agregada correctamente.', 'success');
-        }, [prices, addNotification, fetchAllData]);
-        
-        const updatePrices = React.useCallback(async (newPrices) => {
-            const serviceUpdates = Object.entries(newPrices).map(([name, price]) => ({ name, price }));
-            const { error } = await supabaseClient.from('services').upsert(serviceUpdates, { onConflict: 'name' });
-            if (error) throw error;
-            setPrices(newPrices);
-        }, []);
-
-        const addServiceType = React.useCallback(async (serviceName, price) => {
-            const trimmedName = serviceName.trim();
-            if (serviceTypes.some(s => s.toLowerCase() === trimmedName.toLowerCase())) {
-                throw new Error('El tipo de servicio ya existe.');
-            }
-            const { data, error } = await supabaseClient.from('services').insert({ name: trimmedName, price }).select().single();
-            if (error) throw error;
-            setServiceTypes(prev => [...prev, data.name]);
-            setPrices(prev => ({ ...prev, [data.name]: Number(data.price) }));
-        }, [serviceTypes]);
-
-        const deleteServiceType = React.useCallback(async (serviceName) => {
-            const isServiceInUse = sessions.some(session => session.service_type === serviceName);
-            if (isServiceInUse) {
-                throw new Error('No se puede eliminar un servicio que está en uso en una o más sesiones.');
-            }
-
-            const { error } = await supabaseClient.from('services').delete().eq('name', serviceName);
-            if (error) throw error;
-            
-            setServiceTypes(prev => prev.filter(s => s !== serviceName));
-            setPrices(prev => {
-                const newPrices = { ...prev };
-                delete newPrices[serviceName];
-                return newPrices;
-            });
-        }, [sessions]);
-        
-        const addPaymentToSession = React.useCallback(async (sessionId, payment) => {
-            const paymentForDB = { ...payment, session_id: sessionId };
-            const { data: insertedPayment, error } = await supabaseClient.from('payments').insert(paymentForDB).select().single();
-            if (error) throw error;
-            
-            setSessions(prevSessions =>
-                prevSessions.map(session => {
-                    if (session.id === sessionId) {
-                         const updatedPayments = [...session.payments, insertedPayment].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                        return { ...session, payments: updatedPayments };
-                    }
-                    return session;
-                })
-            );
-            addNotification('Pago agregado correctamente.', 'success');
-        }, [addNotification]);
-
-        const updateSession = React.useCallback(async (sessionId, updatedData) => {
-            const originalSession = sessions.find(s => s.id === sessionId);
-            if (!originalSession) return;
-        
-            const updatePayload = { ...updatedData };
-        
-            if ('date' in updatedData && updatedData.date !== originalSession.date) {
-                if (originalSession.date && updatedData.date) {
-                    updatePayload.is_rescheduled = true;
-                }
-            }
-            
-            if ('time' in updatedData && updatedData.time !== originalSession.time) {
-                if (originalSession.time && updatedData.time) {
-                    updatePayload.is_time_changed = true;
-                }
-            }
-        
-            const locationChanged = 'location' in updatedData && updatedData.location !== originalSession.location;
-            const mapsChanged = 'maps_link' in updatedData && (updatedData.maps_link || '') !== (originalSession.maps_link || '');
-            if (locationChanged || mapsChanged) {
-                const newLocationIsPending = 'location' in updatedData && updatedData.location === 'Lugar pendiente';
-                const oldLocationWasReal = originalSession.location && originalSession.location !== 'Lugar pendiente';
-        
-                if (oldLocationWasReal && !newLocationIsPending) {
-                    updatePayload.is_relocated = true;
-                }
-            }
-        
-            if ('location' in updatedData && updatedData.location === 'Lugar pendiente') {
-                updatePayload.maps_link = '';
-            }
-
-            if (updatedData.service_type && updatedData.service_type !== originalSession.service_type) {
-                updatePayload.price = prices[updatedData.service_type] || originalSession.price;
-            }
-        
-            const { error } = await supabaseClient.from('sessions').update(updatePayload).eq('id', sessionId);
-            if (error) {
-                addNotification(`Error al actualizar: ${error.message}`, 'error');
-                throw error;
-            }
-        
-            await fetchAllData();
-            addNotification('Sesión actualizada.', 'success');
-        }, [sessions, addNotification, fetchAllData, prices]);
-
-        const cancelSession = React.useCallback(async (sessionId) => {
-            const { error } = await supabaseClient.from('sessions').update({ status: SessionStatus.CANCELLED }).eq('id', sessionId);
-            if (error) throw error;
-            setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, status: SessionStatus.CANCELLED } : s)));
-        }, []);
-
-        const restoreSession = React.useCallback(async (sessionId) => {
-            const { error } = await supabaseClient.from('sessions').update({ status: SessionStatus.ACTIVE }).eq('id', sessionId);
-            if (error) throw error;
-            setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, status: SessionStatus.ACTIVE } : s)));
-        }, []);
-
-
-        const contextValue = {
-            sessions,
-            prices,
-            serviceTypes,
-            isLoading,
-            error,
-            notifications,
-            addNotification,
-            addSession,
-            updatePrices,
-            addServiceType,
-            deleteServiceType,
-            addPaymentToSession,
-            updateSession,
-            cancelSession,
-            restoreSession,
-        };
-
-        return (
-            <AppContext.Provider value={contextValue}>
-                {children}
-            </AppContext.Provider>
-        );
-    };
-
-    const useApp = () => {
-        const context = React.useContext(AppContext);
-        if (context === undefined) {
-            throw new Error('useApp must be used within an AppProvider');
-        }
-        return context;
-    };
     
-    // --- From components/ConfirmationModal.tsx ---
-    const ConfirmationModal = ({
-      isOpen,
-      onClose,
-      onConfirm,
-      title,
-      message,
-      confirmText = 'Confirmar',
-      cancelText = 'Cancelar',
-      confirmButtonColor = 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
-      showConfirmButton = true,
-    }) => {
-      if (!isOpen) {
-        return null;
-      }
-
-      return (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm"
-          aria-labelledby="modal-title"
-          role="dialog"
-          aria-modal="true"
-          onClick={onClose}
-        >
-          <div
-            className="bg-zinc-800 text-white rounded-xl shadow-2xl w-full max-w-md m-4 transform transition-all"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="p-6 text-center">
-                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-900/50 mb-4">
-                    <svg className="h-6 w-6 text-red-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                    </svg>
-                </div>
-              <h3 className="text-lg font-bold text-white" id="modal-title">
-                {title}
-              </h3>
-              <div className="mt-2 text-sm text-zinc-300 leading-relaxed">
-                  {message}
-              </div>
-            </div>
-            <div className="bg-zinc-900/50 px-6 py-4 rounded-b-xl sm:flex sm:flex-row-reverse sm:space-x-3 sm:space-x-reverse">
-              {showConfirmButton && (
-                <button
-                  type="button"
-                  className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:ml-3 sm:w-auto sm:text-sm transition-colors ${confirmButtonColor}`}
-                  onClick={onConfirm}
-                >
-                  {confirmText}
-                </button>
-              )}
-              <button
-                type="button"
-                className="mt-3 w-full inline-flex justify-center rounded-md border border-zinc-600 shadow-sm px-4 py-2 bg-transparent text-base font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white sm:mt-0 sm:w-auto sm:text-sm transition-colors"
-                onClick={onClose}
-              >
-                {cancelText}
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    // --- From components/NotificationToast.tsx ---
-    const NotificationToast = () => {
-        const { notifications } = useApp();
-
-        if (notifications.length === 0) {
-            return null;
+    if (session.date) {
+        const sessionDateTime = new Date(`${session.date}T${session.time || '23:59:59'}`);
+        if (sessionDateTime < now) {
+            return { text: 'Finalizada', color: 'text-zinc-400 bg-zinc-700/50', borderColor: 'border-zinc-700' };
         }
-
-        return (
-            <div
-                aria-live="assertive"
-                className="fixed top-5 right-5 z-[100] w-full max-w-sm space-y-3"
-            >
-                {notifications.map(notification => (
-                    <div
-                        key={notification.id}
-                        role="alert"
-                        className={`
-                            w-full px-4 py-3 rounded-lg shadow-2xl text-white text-sm font-medium flex items-center justify-between
-                            animate-fade-in-right
-                            ${notification.type === 'success' ? 'bg-green-600' : 'bg-red-600'}
-                        `}
-                    >
-                        <span>{notification.message}</span>
-                    </div>
-                ))}
-            </div>
-        );
-    };
-
-    // --- From components/Header.tsx ---
-    const NavButton = ({ label, isActive, onClick }) => (
-        <button
-            onClick={onClick}
-            className={`px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 flex-shrink-0 ${
-                isActive
-                    ? 'text-white font-semibold'
-                    : 'text-zinc-400 hover:text-white'
-            }`}
-            aria-current={isActive ? 'page' : undefined}
-        >
-            {label}
-        </button>
-    );
-
-    const Header = ({ currentView, setCurrentView, onAddSessionClick }) => {
-        return (
-            <header className="bg-black sticky top-0 z-30 shadow-lg">
-                <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex items-center justify-between h-16">
-                        <div className="flex items-center space-x-8 flex-1 min-w-0">
-                            <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Keii Portillo Logo" className="h-10 flex-shrink-0" />
-                            <nav className="hidden md:flex items-center space-x-4 overflow-x-auto no-scrollbar">
-                                <NavButton label="Sesiones" isActive={currentView === View.DASHBOARD} onClick={() => setCurrentView(View.DASHBOARD)} />
-                                <NavButton label="Finalizadas" isActive={currentView === View.FINISHED} onClick={() => setCurrentView(View.FINISHED)} />
-                                <NavButton label="Canceladas" isActive={currentView === View.CANCELLED} onClick={() => setCurrentView(View.CANCELLED)} />
-                                <NavButton label="Planner" isActive={currentView === View.PLANNER} onClick={() => setCurrentView(View.PLANNER)} />
-                                <NavButton label="Configuración" isActive={currentView === View.SETTINGS} onClick={() => setCurrentView(View.SETTINGS)} />
-                            </nav>
-                        </div>
-                        <div className="ml-4 flex-shrink-0">
-                            <button
-                                onClick={onAddSessionClick}
-                                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-black bg-white rounded-lg shadow-md hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:ring-offset-2 focus:ring-offset-black transition-all"
-                                aria-label="Añadir Nueva Sesión"
-                            >
-                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
-                                 </svg>
-                                 <span className="hidden sm:inline">Añadir Sesión</span>
-                                 <span className="sm:hidden">Añadir</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                {/* Mobile Top Navigation */}
-                <nav className="md:hidden flex items-center border-t border-zinc-700 overflow-x-auto no-scrollbar">
-                    <div className="flex flex-nowrap px-1">
-                        <NavButton label="Sesiones" isActive={currentView === View.DASHBOARD} onClick={() => setCurrentView(View.DASHBOARD)} />
-                        <NavButton label="Finalizadas" isActive={currentView === View.FINISHED} onClick={() => setCurrentView(View.FINISHED)} />
-                        <NavButton label="Canceladas" isActive={currentView === View.CANCELLED} onClick={() => setCurrentView(View.CANCELLED)} />
-                        <NavButton label="Planner" isActive={currentView === View.PLANNER} onClick={() => setCurrentView(View.PLANNER)} />
-                        <NavButton label="Configuración" isActive={currentView === View.SETTINGS} onClick={() => setCurrentView(View.SETTINGS)} />
-                    </div>
-                </nav>
-            </header>
-        );
-    };
-
-    // --- Common Modal Components ---
-    const ModalInputField = ({ label, id, ...props }) => (
-        <div>
-            <label htmlFor={id} className="block text-sm font-medium text-zinc-300">{label}</label>
-            <div className="mt-1">
-                <input
-                    id={id}
-                    {...props}
-                    className="block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white disabled:bg-zinc-800 disabled:cursor-not-allowed"
-                />
-            </div>
-        </div>
-    );
-
-    const ModalCheckboxField = ({ label, checked, onChange, name, id }) => (
-        <div className="flex items-center">
-            <input
-                id={id}
-                type="checkbox"
-                name={name}
-                checked={checked}
-                onChange={onChange}
-                className="h-4 w-4 text-white bg-zinc-600 border-zinc-500 rounded focus:ring-white focus:ring-offset-zinc-800"
-            />
-            <label htmlFor={id} className="ml-2 block text-sm text-zinc-300">{label}</label>
-        </div>
-    );
-
-
-    // --- From components/AddSessionModal.tsx ---
-    const AddSessionModal = ({ onClose }) => {
-        const { addSession, prices, serviceTypes, sessions } = useApp();
-        const [formData, setFormData] = React.useState({
-            clientName: '',
-            contact: '',
-            email: '',
-            serviceType: serviceTypes.length > 0 ? serviceTypes[0] : '',
-            clientOrigin: '',
-            clientOriginAccount: '',
-            downPaymentAmount: '',
-            downPaymentMethod: PaymentMethod.TRANSFER,
-            downPaymentDate: new Date().toISOString().split('T')[0],
-            location: '',
-            mapsLink: '',
-            date: '',
-            time: '',
-            notes: '',
-            isDatePending: false,
-            isTimePending: false,
-            isLocationPending: false,
-        });
-        const [error, setError] = React.useState(null);
-        const [conflict, setConflict] = React.useState(null);
-
-        const handleChange = React.useCallback((e) => {
-            const { name, value, type } = e.target;
-            
-            if (type === 'checkbox') {
-                const { checked } = e.target;
-                setFormData(prev => ({ ...prev, [name]: checked }));
-            } else {
-                setFormData(prev => ({ ...prev, [name]: value }));
-            }
-
-            if (error) {
-                setError(null);
-            }
-        }, [error]);
-
-        const proceedToAddSession = React.useCallback(async () => {
-            try {
-                const { 
-                    clientName, contact, email, serviceType, clientOrigin, clientOriginAccount, 
-                    downPaymentAmount, downPaymentMethod, downPaymentDate, 
-                    location, mapsLink, date, time, notes,
-                    isDatePending, isTimePending, isLocationPending 
-                } = formData;
-
-                const initialPayment = {
-                    amount: parseFloat(downPaymentAmount),
-                    date: downPaymentDate,
-                    method: downPaymentMethod,
-                };
-
-                const sessionData = {
-                    client_name: clientName,
-                    contact,
-                    email: email.trim() === '' ? undefined : email,
-                    service_type: serviceType,
-                    client_origin: clientOrigin === '' ? undefined : clientOrigin,
-                    client_origin_account: clientOriginAccount.trim() === '' ? undefined : clientOriginAccount,
-                    location: isLocationPending ? 'Lugar pendiente' : location,
-                    maps_link: isLocationPending ? '' : mapsLink,
-                    date: isDatePending ? null : date,
-                    time: isDatePending || isTimePending ? undefined : time,
-                    notes,
-                };
-                
-                await addSession(sessionData, initialPayment);
-                setConflict(null);
-                onClose();
-            } catch (err) {
-                 setError(`Error al guardar: ${err.message}`);
-                 setConflict(null);
-            }
-        }, [formData, addSession, onClose]);
-
-
-        const handleSubmit = React.useCallback(async (e) => {
-            e.preventDefault();
-            setError(null);
-
-            const { 
-                clientName, contact, serviceType, downPaymentAmount, downPaymentDate, 
-                location, date, time, 
-                isDatePending, isTimePending, isLocationPending 
-            } = formData;
-
-            if (!clientName || !contact || !serviceType || !downPaymentAmount || !downPaymentDate) {
-                setError('Los campos de cliente, servicio y pago inicial son obligatorios.');
-                return;
-            }
-            if (!isDatePending && !date) {
-                setError('La fecha del servicio es obligatoria o debe marcarse como pendiente.');
-                return;
-            }
-            if (!isDatePending && !isTimePending && !time) {
-                setError('La hora del servicio es obligatoria o debe marcarse como pendiente.');
-                return;
-            }
-            if (!isLocationPending && !location) {
-                setError('El lugar del servicio es obligatorio o debe marcarse como pendiente.');
-                return;
-            }
-            if (isNaN(parseFloat(downPaymentAmount))) {
-                setError('La seña debe ser un número.');
-                return;
-            }
-
-            if (!isDatePending && date) {
-                const activeSessionsOnSameDay = sessions.filter(s => s.status === SessionStatus.ACTIVE && s.date === date);
-
-                if (activeSessionsOnSameDay.length > 0) {
-                    let hardConflictSession = undefined;
-                    if (!isTimePending && time) {
-                        hardConflictSession = activeSessionsOnSameDay.find(existingSession => {
-                            if (!existingSession.time) {
-                                return false;
-                            }
-                            return existingSession.time.substring(0, 5) === time.substring(0, 5);
-                        });
-                    }
-
-                    if (hardConflictSession) {
-                        setConflict({ type: 'hard', session: hardConflictSession });
-                        return;
-                    } else {
-                        setConflict({ type: 'soft', session: activeSessionsOnSameDay[0] });
-                        return;
-                    }
-                }
-            }
-            
-            await proceedToAddSession();
-
-        }, [formData, proceedToAddSession, sessions]);
-        
-        const servicePrice = prices[formData.serviceType] || 0;
-
-        return (
-            <React.Fragment>
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm" aria-modal="true" role="dialog" onClick={onClose}>
-                    <div className="bg-zinc-800 text-white rounded-xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto flex flex-col" onClick={e => e.stopPropagation()}>
-                        <form onSubmit={handleSubmit} className="flex flex-col h-full">
-                            <div className="p-6 sm:p-8">
-                                <div className="flex justify-between items-start">
-                                    <h2 className="text-2xl font-bold text-white">Añadir Nueva Sesión</h2>
-                                    <button type="button" onClick={onClose} className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white" aria-label="Cerrar modal">
-                                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                    </button>
-                                </div>
-                                <div className="mt-6 space-y-6">
-                                    <ModalInputField label="Nombre del Cliente" id="clientName" name="clientName" value={formData.clientName} onChange={handleChange} required />
-                                    <ModalInputField label="Contacto (Teléfono, etc.)" id="contact" name="contact" value={formData.contact} onChange={handleChange} required />
-                                    <ModalInputField label="Correo Electrónico (Opcional)" id="email" name="email" type="email" value={formData.email} onChange={handleChange} />
-
-                                    <div>
-                                        <label htmlFor="serviceType" className="block text-sm font-medium text-zinc-300">Tipo de Servicio</label>
-                                        <div className="mt-1 flex items-center gap-4">
-                                            <select
-                                                id="serviceType"
-                                                name="serviceType"
-                                                value={formData.serviceType}
-                                                onChange={handleChange}
-                                                className="flex-grow block w-full pl-3 pr-10 py-2 text-base bg-zinc-700 text-white border-zinc-600 focus:outline-none focus:ring-white focus:border-white sm:text-sm rounded-md"
-                                                required
-                                            >
-                                                {serviceTypes.length === 0 && <option value="" disabled>No hay servicios configurados</option>}
-                                                {serviceTypes.map(type => (
-                                                    <option key={type} value={type}>{type}</option>
-                                                ))}
-                                            </select>
-                                            <p className="text-sm text-zinc-300 whitespace-nowrap">Precio: <span className="font-semibold">${servicePrice.toLocaleString('es-AR')}</span></p>
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <label htmlFor="clientOrigin" className="block text-sm font-medium text-zinc-300">Origen del Cliente (Opcional)</label>
-                                        <div className="mt-1">
-                                            <select
-                                                id="clientOrigin"
-                                                name="clientOrigin"
-                                                value={formData.clientOrigin}
-                                                onChange={handleChange}
-                                                className="block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white"
-                                            >
-                                                <option value="">Seleccionar origen...</option>
-                                                {ALL_CLIENT_ORIGINS.map(origin => (
-                                                    <option key={origin} value={origin}>{origin}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    {(formData.clientOrigin === ClientOrigin.INSTAGRAM || formData.clientOrigin === ClientOrigin.FACEBOOK) && (
-                                        <ModalInputField
-                                            label="Usuario o enlace del perfil (Opcional)"
-                                            id="clientOriginAccount"
-                                            name="clientOriginAccount"
-                                            type="text"
-                                            value={formData.clientOriginAccount}
-                                            onChange={handleChange}
-                                            placeholder="Ej: @usuario o https://instagram.com/usuario"
-                                        />
-                                    )}
-
-
-                                    <div className="border-t border-zinc-700 pt-6">
-                                        <h3 className="text-lg font-medium text-zinc-100">Detalles del Pago Inicial (Seña)</h3>
-                                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-6">
-                                            <ModalInputField label="Monto de la Seña ($)" id="downPaymentAmount" name="downPaymentAmount" type="number" step="0.01" value={formData.downPaymentAmount} onChange={handleChange} required />
-                                            <ModalInputField label="Fecha de la Seña" id="downPaymentDate" name="downPaymentDate" type="date" value={formData.downPaymentDate} onChange={handleChange} required style={{ colorScheme: 'dark' }}/>
-                                        </div>
-                                        <div className="mt-6">
-                                            <label htmlFor="downPaymentMethod" className="block text-sm font-medium text-zinc-300">Método de Pago</label>
-                                            <div className="mt-1">
-                                                <select
-                                                    id="downPaymentMethod"
-                                                    name="downPaymentMethod"
-                                                    value={formData.downPaymentMethod}
-                                                    onChange={handleChange}
-                                                    className="block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white"
-                                                    required
-                                                >
-                                                    {Object.values(PaymentMethod).map(method => (
-                                                        <option key={method} value={method}>{method}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-                                            <ModalInputField label="Fecha del Servicio" id="date" name="date" type="date" value={formData.date} onChange={handleChange} required={!formData.isDatePending} style={{ colorScheme: 'dark' }} disabled={formData.isDatePending} />
-                                            <ModalInputField label="Hora del Servicio" id="time" name="time" type="time" value={formData.time} onChange={handleChange} required={!formData.isDatePending && !formData.isTimePending} style={{ colorScheme: 'dark' }} disabled={formData.isTimePending || formData.isDatePending} />
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-                                            <ModalCheckboxField label="Fecha pendiente" id="isDatePending" name="isDatePending" checked={formData.isDatePending} onChange={handleChange} />
-                                            <ModalCheckboxField label="Horario pendiente" id="isTimePending" name="isTimePending" checked={formData.isTimePending} onChange={handleChange} />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <ModalInputField label="Lugar del Servicio" id="location" name="location" value={formData.location} onChange={handleChange} required={!formData.isLocationPending} disabled={formData.isLocationPending} />
-                                        <ModalCheckboxField label="Lugar pendiente" id="isLocationPending" name="isLocationPending" checked={formData.isLocationPending} onChange={handleChange} />
-                                        <ModalInputField label="Enlace de Google Maps (Opcional)" id="mapsLink" name="mapsLink" value={formData.mapsLink} onChange={handleChange} disabled={formData.isLocationPending} />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="notes" className="block text-sm font-medium text-zinc-300">Anotaciones</label>
-                                        <div className="mt-1">
-                                            <textarea
-                                                id="notes"
-                                                name="notes"
-                                                rows={3}
-                                                value={formData.notes}
-                                                onChange={handleChange}
-                                                className="block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white"
-                                                placeholder="Detalles adicionales, recordatorios, etc."
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div className="flex-shrink-0 px-6 py-4 bg-zinc-900/50 rounded-b-xl mt-auto">
-                                {error && <p className="text-sm text-red-500 mb-3 text-center">{error}</p>}
-                                <div className="flex justify-end space-x-3">
-                                    <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-200 bg-transparent border border-zinc-600 rounded-md shadow-sm hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white">
-                                        Cancelar
-                                    </button>
-                                    <button type="submit" className="px-4 py-2 text-sm font-medium text-black bg-white rounded-md shadow-sm hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white">
-                                        Guardar Sesión
-                                    </button>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-                {conflict && (
-                    <ConfirmationModal
-                        isOpen={!!conflict}
-                        onClose={() => setConflict(null)}
-                        onConfirm={proceedToAddSession}
-                        title={conflict.type === 'hard' ? "Conflicto de Horario" : "Conflicto de Fecha"}
-                        message={
-                            conflict.type === 'hard'
-                            ? `Ya tienes una sesión en "${conflict.session.location}" para este horario.`
-                            : <React.Fragment>
-                                Ya tienes una sesión en <br/>
-                                <strong>{conflict.session.location}</strong> a las <strong>{conflict.session.time || 'horario pendiente'}</strong> para ese día.
-                            </React.Fragment>
-                        }
-                        confirmText="Agregar"
-                        cancelText={conflict.type === 'hard' ? 'Cerrar' : 'Cancelar'}
-                        showConfirmButton={conflict.type === 'soft'}
-                    />
-                )}
-            </React.Fragment>
-        );
-    };
-
-    // --- From components/AddPaymentModal.tsx ---
-    const AddPaymentModal = ({ session, onClose }) => {
-        const { addPaymentToSession } = useApp();
-        const [formData, setFormData] = React.useState({
-            amount: '',
-            date: new Date().toISOString().split('T')[0],
-            method: PaymentMethod.TRANSFER,
-        });
-        const [error, setError] = React.useState(null);
-
-        const totalPaid = session.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-        const remaining = session.price - totalPaid;
-
-        const handleChange = React.useCallback((e) => {
-            const { name, value } = e.target;
-            setFormData(prev => ({ ...prev, [name]: value }));
-            setError(null);
-        }, []);
-
-        const handleSubmit = React.useCallback(async (e) => {
-            e.preventDefault();
-            
-            const amount = parseFloat(formData.amount);
-            if (isNaN(amount) || amount <= 0) {
-                setError('El monto debe ser un número positivo.');
-                return;
-            }
-
-            if (amount > remaining) {
-                setError(`El monto no puede superar el restante de $${remaining.toLocaleString('es-AR')}.`);
-                return;
-            }
-
-            const newPayment = {
-                amount,
-                date: formData.date,
-                method: formData.method,
-            };
-
-            await addPaymentToSession(session.id, newPayment);
-            onClose();
-
-        }, [formData, addPaymentToSession, onClose, session.id, remaining]);
-
-        return (
-             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm" aria-modal="true" role="dialog" onClick={onClose}>
-                <div className="bg-zinc-800 text-white rounded-xl shadow-2xl w-full max-w-md m-4" onClick={e => e.stopPropagation()}>
-                    <form onSubmit={handleSubmit}>
-                        <div className="p-6">
-                            <div className="flex justify-between items-start">
-                                 <div>
-                                    <h2 className="text-xl font-bold text-white">Añadir Pago</h2>
-                                    <p className="text-sm text-zinc-400">Para la sesión de {session.client_name}</p>
-                                 </div>
-                                 <button type="button" onClick={onClose} className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white" aria-label="Cerrar modal">
-                                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                </button>
-                            </div>
-                             <div className="mt-6 space-y-4">
-                                <ModalInputField 
-                                    label={`Monto a Pagar (Restante: $${remaining.toLocaleString('es-AR')})`} 
-                                    id="amount" 
-                                    name="amount" 
-                                    type="number" 
-                                    step="0.01"
-                                    max={remaining}
-                                    value={formData.amount} 
-                                    onChange={handleChange}
-                                    required
-                                />
-                                 <ModalInputField 
-                                    label="Fecha del Pago" 
-                                    id="date" 
-                                    name="date" 
-                                    type="date"
-                                    value={formData.date}
-                                    onChange={handleChange} 
-                                    style={{ colorScheme: 'dark' }}
-                                    required
-                                />
-                                <div>
-                                    <label htmlFor="method" className="block text-sm font-medium text-zinc-300">Método de Pago</label>
-                                    <div className="mt-1">
-                                        <select
-                                            id="method"
-                                            name="method"
-                                            value={formData.method}
-                                            onChange={handleChange}
-                                            className="block w-full px-3 py-2 border border-zinc-600 bg-zinc-700 text-white rounded-md shadow-sm focus:outline-none focus:ring-white focus:border-white sm:text-sm"
-                                            required
-                                        >
-                                            {Object.values(PaymentMethod).map(method => (
-                                                <option key={method} value={method}>{method}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div className="px-6 py-4 bg-zinc-900/50 rounded-b-xl">
-                            {error && <p className="text-sm text-red-500 mb-3 text-center">{error}</p>}
-                            <div className="flex justify-end space-x-3">
-                                <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-200 bg-transparent border border-zinc-600 rounded-md shadow-sm hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white">
-                                    Cancelar
-                                </button>
-                                <button type="submit" className="px-4 py-2 text-sm font-medium text-black bg-white rounded-md shadow-sm hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white">
-                                    Guardar Pago
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        );
-    };
-
-    // --- From components/EditSessionModal.tsx ---
-    const EditSessionModal = ({ session, onClose }) => {
-        const { updateSession, prices, serviceTypes, sessions } = useApp();
-        const [formData, setFormData] = React.useState({
-            clientName: '', contact: '', email: '', serviceType: '', clientOrigin: '', clientOriginAccount: '',
-            location: '', mapsLink: '', date: '', time: '', notes: '',
-            isDatePending: false, isTimePending: false, isLocationPending: false,
-        });
-        const [error, setError] = React.useState(null);
-        const [isSubmitting, setIsSubmitting] = React.useState(false);
-        const [conflict, setConflict] = React.useState(null);
-
-        React.useEffect(() => {
-            if (session) {
-                setFormData({
-                    clientName: session.client_name,
-                    contact: session.contact,
-                    email: session.email || '',
-                    serviceType: session.service_type,
-                    clientOrigin: session.client_origin || '',
-                    clientOriginAccount: session.client_origin_account || '',
-                    location: session.location,
-                    mapsLink: session.maps_link || '',
-                    date: session.date || '',
-                    time: session.time || '',
-                    notes: session.notes,
-                    isDatePending: !session.date,
-                    isTimePending: !session.time,
-                    isLocationPending: session.location === 'Lugar pendiente',
-                });
-            }
-        }, [session]);
-        
-        const handleChange = React.useCallback((e) => {
-            const { name, value, type } = e.target;
-            if (type === 'checkbox') {
-                const { checked } = e.target;
-                setFormData(prev => ({ ...prev, [name]: checked }));
-            } else {
-                setFormData(prev => ({ ...prev, [name]: value }));
-            }
-            if (error) setError(null);
-        }, [error]);
-
-        const proceedToUpdateSession = React.useCallback(async () => {
-            setIsSubmitting(true);
-            setError(null);
-            try {
-                const { 
-                    clientName, contact, email, serviceType, clientOrigin, clientOriginAccount, 
-                    location, mapsLink, date, time, notes,
-                    isDatePending, isTimePending, isLocationPending 
-                } = formData;
-
-                const updatedData = {
-                    client_name: clientName,
-                    contact,
-                    email: email.trim() === '' ? undefined : email,
-                    service_type: serviceType,
-                    client_origin: clientOrigin === '' ? undefined : clientOrigin,
-                    client_origin_account: clientOriginAccount.trim() === '' ? undefined : clientOriginAccount,
-                    location: isLocationPending ? 'Lugar pendiente' : location,
-                    maps_link: isLocationPending ? '' : mapsLink,
-                    date: isDatePending ? null : date,
-                    time: isDatePending || isTimePending ? undefined : time,
-                    notes,
-                };
-                
-                await updateSession(session.id, updatedData);
-                setConflict(null);
-                onClose();
-            } catch (err) {
-                 setError(`Error al guardar: ${err.message}`);
-                 setConflict(null);
-            } finally {
-                setIsSubmitting(false);
-            }
-        }, [formData, updateSession, session.id, onClose]);
-
-        const handleSubmit = React.useCallback(async (e) => {
-            e.preventDefault();
-            setError(null);
-
-            const { clientName, contact, serviceType, location, date, time, isDatePending, isTimePending, isLocationPending } = formData;
-
-            if (!clientName || !contact || !serviceType) {
-                setError('Los campos de cliente y servicio son obligatorios.');
-                return;
-            }
-            if (!isDatePending && !date) {
-                setError('La fecha del servicio es obligatoria o debe marcarse como pendiente.');
-                return;
-            }
-            if (!isDatePending && !isTimePending && !time) {
-                setError('La hora del servicio es obligatoria o debe marcarse como pendiente.');
-                return;
-            }
-            if (!isLocationPending && !location) {
-                setError('El lugar del servicio es obligatorio o debe marcarse como pendiente.');
-                return;
-            }
-            
-            if (!isDatePending && date) {
-                const activeSessionsOnSameDay = sessions.filter(s => 
-                    s.status === SessionStatus.ACTIVE && s.date === date && s.id !== session.id
-                );
-
-                if (activeSessionsOnSameDay.length > 0) {
-                    let hardConflictSession;
-                    if (!isTimePending && time) {
-                        hardConflictSession = activeSessionsOnSameDay.find(existingSession => 
-                            existingSession.time && existingSession.time.substring(0, 5) === time.substring(0, 5)
-                        );
-                    }
-                    if (hardConflictSession) {
-                        setConflict({ type: 'hard', session: hardConflictSession });
-                        return;
-                    } else {
-                        setConflict({ type: 'soft', session: activeSessionsOnSameDay[0] });
-                        return;
-                    }
-                }
-            }
-            
-            await proceedToUpdateSession();
-        }, [formData, proceedToUpdateSession, sessions, session.id]);
-        
-        const servicePrice = prices[formData.serviceType] || session.price;
-
-        return (
-            <React.Fragment>
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm" aria-modal="true" role="dialog" onClick={onClose}>
-                    <div className="bg-zinc-800 text-white rounded-xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] overflow-y-auto flex flex-col" onClick={e => e.stopPropagation()}>
-                        <form onSubmit={handleSubmit} className="flex flex-col h-full">
-                            <div className="p-6 sm:p-8">
-                                <div className="flex justify-between items-start">
-                                    <h2 className="text-2xl font-bold text-white">Editar Sesión</h2>
-                                    <button type="button" onClick={onClose} className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white" aria-label="Cerrar modal">
-                                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                    </button>
-                                </div>
-                                <div className="mt-6 space-y-6">
-                                    <ModalInputField label="Nombre del Cliente" id="clientName" name="clientName" value={formData.clientName} onChange={handleChange} required />
-                                    <ModalInputField label="Contacto (Teléfono, etc.)" id="contact" name="contact" value={formData.contact} onChange={handleChange} required />
-                                    <ModalInputField label="Correo Electrónico (Opcional)" id="email" name="email" type="email" value={formData.email} onChange={handleChange} />
-
-                                    <div>
-                                        <label htmlFor="serviceType" className="block text-sm font-medium text-zinc-300">Tipo de Servicio</label>
-                                        <div className="mt-1 flex items-center gap-4">
-                                            <select
-                                                id="serviceType" name="serviceType" value={formData.serviceType} onChange={handleChange}
-                                                className="flex-grow block w-full pl-3 pr-10 py-2 text-base bg-zinc-700 text-white border-zinc-600 focus:outline-none focus:ring-white focus:border-white sm:text-sm rounded-md" required
-                                            >
-                                                {serviceTypes.map(type => (<option key={type} value={type}>{type}</option>))}
-                                            </select>
-                                            <p className="text-sm text-zinc-300 whitespace-nowrap">Precio: <span className="font-semibold">${servicePrice.toLocaleString('es-AR')}</span></p>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label htmlFor="clientOrigin" className="block text-sm font-medium text-zinc-300">Origen del Cliente (Opcional)</label>
-                                        <select id="clientOrigin" name="clientOrigin" value={formData.clientOrigin} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white">
-                                            <option value="">Seleccionar origen...</option>
-                                            {ALL_CLIENT_ORIGINS.map(origin => (<option key={origin} value={origin}>{origin}</option>))}
-                                        </select>
-                                    </div>
-                                    {(formData.clientOrigin === ClientOrigin.INSTAGRAM || formData.clientOrigin === ClientOrigin.FACEBOOK) && (
-                                        <ModalInputField label="Usuario o enlace del perfil (Opcional)" id="clientOriginAccount" name="clientOriginAccount" type="text" value={formData.clientOriginAccount} onChange={handleChange} placeholder="Ej: @usuario o https://instagram.com/usuario" />
-                                    )}
-                                    <div className="space-y-4 pt-6 border-t border-zinc-700">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-                                            <ModalInputField label="Fecha del Servicio" id="date" name="date" type="date" value={formData.date} onChange={handleChange} required={!formData.isDatePending} style={{ colorScheme: 'dark' }} disabled={formData.isDatePending} />
-                                            <ModalInputField label="Hora del Servicio" id="time" name="time" type="time" value={formData.time} onChange={handleChange} required={!formData.isDatePending && !formData.isTimePending} style={{ colorScheme: 'dark' }} disabled={formData.isTimePending || formData.isDatePending} />
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-                                            <ModalCheckboxField label="Fecha pendiente" id="isDatePending" name="isDatePending" checked={formData.isDatePending} onChange={handleChange} />
-                                            <ModalCheckboxField label="Horario pendiente" id="isTimePending" name="isTimePending" checked={formData.isTimePending} onChange={handleChange} />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <ModalInputField label="Lugar del Servicio" id="location" name="location" value={formData.location} onChange={handleChange} required={!formData.isLocationPending} disabled={formData.isLocationPending} />
-                                        <ModalCheckboxField label="Lugar pendiente" id="isLocationPending" name="isLocationPending" checked={formData.isLocationPending} onChange={handleChange} />
-                                        <ModalInputField label="Enlace de Google Maps (Opcional)" id="mapsLink" name="mapsLink" value={formData.mapsLink} onChange={handleChange} disabled={formData.isLocationPending} />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="notes" className="block text-sm font-medium text-zinc-300">Anotaciones</label>
-                                        <textarea id="notes" name="notes" rows={3} value={formData.notes} onChange={handleChange} className="mt-1 block w-full px-3 py-2 border border-zinc-600 rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-white focus:border-white sm:text-sm bg-zinc-700 text-white" placeholder="Detalles adicionales, recordatorios, etc." />
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div className="flex-shrink-0 px-6 py-4 bg-zinc-900/50 rounded-b-xl mt-auto">
-                                {error && <p className="text-sm text-red-500 mb-3 text-center">{error}</p>}
-                                <div className="flex justify-end space-x-3">
-                                    <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-zinc-200 bg-transparent border border-zinc-600 rounded-md shadow-sm hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white">
-                                        Cancelar
-                                    </button>
-                                    <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-black bg-white rounded-md shadow-sm hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white disabled:bg-zinc-400 disabled:cursor-not-allowed">
-                                        {isSubmitting ? 'Guardando...' : 'Guardar Cambios'}
-                                    </button>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-                {conflict && (
-                    <ConfirmationModal
-                        isOpen={!!conflict}
-                        onClose={() => setConflict(null)}
-                        onConfirm={proceedToUpdateSession}
-                        title={conflict.type === 'hard' ? "Conflicto de Horario" : "Conflicto de Fecha"}
-                        message={
-                            conflict.type === 'hard'
-                            ? `Ya tienes una sesión en "${conflict.session.location}" para este horario.`
-                            : <React.Fragment>Ya tienes una sesión en <br/><strong>{conflict.session.location}</strong> a las <strong>{conflict.session.time || 'horario pendiente'}</strong> para ese día.</React.Fragment>
-                        }
-                        confirmText="Guardar de todas formas"
-                        cancelText={conflict.type === 'hard' ? 'Cerrar' : 'Cancelar'}
-                        showConfirmButton={conflict.type === 'soft'}
-                    />
-                )}
-            </React.Fragment>
-        );
-    };
-
-
-    // --- From components/SessionCard.tsx ---
-    const formatDate = (dateString) => {
-        if (!dateString) return 'Fecha pendiente';
-        return new Date(dateString + 'T00:00:00').toLocaleDateString('es-AR', {
-            day: '2-digit',
-            month: 'long',
-            year: 'numeric'
-        });
-    };
-
-    const formatPaymentDate = (dateString) => {
-        return new Date(dateString + 'T00:00:00').toLocaleDateString('es-AR', {
-            day: '2-digit', month: '2-digit', year: 'numeric'
-        });
+    } else {
+         return { text: 'Fecha Pendiente', color: 'text-blue-400 bg-blue-900/50 font-semibold', borderColor: 'border-blue-500/50' };
     }
 
-    const getSessionState = (session) => {
-        const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const sessionDay = new Date(session.date + 'T00:00:00');
+    const diffTime = sessionDay.getTime() - today.getTime();
+    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (daysRemaining === 0) {
+        return { text: 'Hoy', color: 'text-green-400 bg-green-900/50 font-semibold', borderColor: 'border-green-500/50' };
+    }
+    if (daysRemaining === 1) {
+        return { text: 'Mañana', color: 'text-yellow-400 bg-yellow-900/50 font-semibold', borderColor: 'border-yellow-500/50' };
+    }
+    if (daysRemaining <= 7) {
+        return { text: `En ${daysRemaining} días`, color: 'text-yellow-400 bg-yellow-900/50', borderColor: 'border-yellow-500/50' };
+    }
+    return { text: `Faltan ${daysRemaining} días`, color: 'text-zinc-400 bg-zinc-800/50', borderColor: 'border-zinc-700' };
+};
 
-        if (session.status === SessionStatus.CANCELLED) {
-            return { text: 'Cancelada', color: 'text-red-400 bg-red-900/50', borderColor: 'border-red-500/50' };
-        }
-        
-        if (session.date) {
-            const sessionDateTime = new Date(`${session.date}T${session.time || '23:59:59'}`);
-            if (sessionDateTime < now) {
-                return { text: 'Finalizada', color: 'text-zinc-400 bg-zinc-700/50', borderColor: 'border-zinc-700' };
+const HistoryIcon: React.FC<{ tooltip: string }> = ({ tooltip }) => (
+    <span title={tooltip} className="cursor-help">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.415L11 9.586V6z" clipRule="evenodd" />
+        </svg>
+    </span>
+);
+
+const SessionCard: React.FC<SessionCardProps> = ({ session }) => {
+    const { cancelSession, restoreSession, updateSession, addNotification, deleteSession } = useApp();
+
+    const [isAddPaymentModalOpen, setAddPaymentModalOpen] = useState(false);
+    const [isEditModalOpen, setEditModalOpen] = useState(false);
+    const [isCancelModalOpen, setCancelModalOpen] = useState(false);
+    const [isRestoreModalOpen, setRestoreModalOpen] = useState(false);
+    const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [isEditingNotes, setIsEditingNotes] = useState(false);
+    const [localNotes, setLocalNotes] = useState(session.notes);
+    const [isPaymentsVisible, setIsPaymentsVisible] = useState(false);
+    
+    const notesTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+    const sessionState = useMemo(() => getSessionState(session), [session]);
+    const isFinished = sessionState.text === 'Finalizada';
+    const totalPaid = useMemo(() => session.payments.reduce((sum, p) => sum + Number(p.amount), 0), [session.payments]);
+    const remaining = useMemo(() => session.price - totalPaid, [session.price, totalPaid]);
+    const progress = useMemo(() => (session.price > 0 ? (totalPaid / session.price) * 100 : (totalPaid > 0 ? 100 : 0)), [totalPaid, session.price]);
+
+    const handleCancel = useCallback(async () => {
+        await cancelSession(session.id);
+        addNotification('Sesión cancelada.', 'success');
+        setCancelModalOpen(false);
+    }, [session.id, cancelSession, addNotification]);
+
+    const handleRestore = useCallback(async () => {
+        await restoreSession(session.id);
+        addNotification('Sesión restaurada.', 'success');
+        setRestoreModalOpen(false);
+    }, [session.id, restoreSession, addNotification]);
+    
+    const handleDelete = useCallback(async () => {
+        await deleteSession(session.id);
+        setDeleteModalOpen(false);
+    }, [session.id, deleteSession]);
+
+    const handleNotesSave = useCallback(async () => {
+        // Only save if notes have actually changed
+        if (localNotes !== session.notes) {
+            try {
+                await updateSession(session.id, { notes: localNotes });
+                addNotification('Anotaciones guardadas.', 'success');
+            } catch {
+                addNotification('Error al guardar anotaciones.', 'error');
+                setLocalNotes(session.notes); // Revert on error
             }
-        } else {
-             return { text: 'Fecha Pendiente', color: 'text-blue-400 bg-blue-900/50 font-semibold', borderColor: 'border-blue-500/50' };
         }
+        setIsEditingNotes(false);
+    }, [localNotes, session.notes, session.id, updateSession, addNotification]);
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const sessionDay = new Date(session.date + 'T00:00:00');
-        const diffTime = sessionDay.getTime() - today.getTime();
-        const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        if (daysRemaining === 0) {
-            return { text: 'Hoy', color: 'text-green-400 bg-green-900/50 font-semibold', borderColor: 'border-green-500/50' };
+    useEffect(() => {
+        if (isEditingNotes) {
+            notesTextareaRef.current?.focus();
+            notesTextareaRef.current?.select();
         }
-        if (daysRemaining === 1) {
-            return { text: 'Mañana', color: 'text-yellow-400 bg-yellow-900/50 font-semibold', borderColor: 'border-yellow-500/50' };
-        }
-        if (daysRemaining <= 7) {
-            return { text: `En ${daysRemaining} días`, color: 'text-yellow-400 bg-yellow-900/50', borderColor: 'border-yellow-500/50' };
-        }
-        return { text: `Faltan ${daysRemaining} días`, color: 'text-zinc-400 bg-zinc-800/50', borderColor: 'border-zinc-700' };
-    };
+    }, [isEditingNotes]);
+    
+    const handlePrint = useCallback(() => {
+        const paymentStatus = remaining <= 0 ? 'Pagado' : 'Pendiente';
+        const formattedFullDate = session.date ? new Date(session.date + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Fecha pendiente';
 
-    const HistoryIcon = ({ tooltip }) => (
-        <span title={tooltip} className="cursor-help">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.415L11 9.586V6z" clipRule="evenodd" />
-            </svg>
-        </span>
-    );
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = session.notes;
+        const sanitizedNotes = tempDiv.textContent || tempDiv.innerText || "";
 
-    const SessionCard = ({ session }) => {
-        const { cancelSession, restoreSession, updateSession, addNotification } = useApp();
-
-        const [isAddPaymentModalOpen, setAddPaymentModalOpen] = React.useState(false);
-        const [isEditModalOpen, setEditModalOpen] = React.useState(false);
-        const [isCancelModalOpen, setCancelModalOpen] = React.useState(false);
-        const [isRestoreModalOpen, setRestoreModalOpen] = React.useState(false);
-        const [isEditingNotes, setIsEditingNotes] = React.useState(false);
-        const [localNotes, setLocalNotes] = React.useState(session.notes);
-        const [isPaymentsVisible, setIsPaymentsVisible] = React.useState(false);
-        
-        const notesTextareaRef = React.useRef(null);
-
-        const sessionState = React.useMemo(() => getSessionState(session), [session]);
-        const totalPaid = React.useMemo(() => session.payments.reduce((sum, p) => sum + Number(p.amount), 0), [session.payments]);
-        const remaining = React.useMemo(() => session.price - totalPaid, [session.price, totalPaid]);
-        const progress = React.useMemo(() => (session.price > 0 ? (totalPaid / session.price) * 100 : (totalPaid > 0 ? 100 : 0)), [totalPaid, session.price]);
-
-        const handleCancel = React.useCallback(async () => {
-            await cancelSession(session.id);
-            addNotification('Sesión cancelada.', 'success');
-            setCancelModalOpen(false);
-        }, [session.id, cancelSession, addNotification]);
-
-        const handleRestore = React.useCallback(async () => {
-            await restoreSession(session.id);
-            addNotification('Sesión restaurada.', 'success');
-            setRestoreModalOpen(false);
-        }, [session.id, restoreSession, addNotification]);
-        
-        const handleNotesSave = React.useCallback(async () => {
-            if (localNotes !== session.notes) {
-                try {
-                    await updateSession(session.id, { notes: localNotes });
-                    addNotification('Anotaciones guardadas.', 'success');
-                } catch {
-                    addNotification('Error al guardar anotaciones.', 'error');
-                    setLocalNotes(session.notes);
+        const printContent = `
+          <html>
+            <head>
+              <title>Keii Portillo - Fotografía</title>
+              <style>
+                @import url('https://rsms.me/inter/inter.css');
+                @page {
+                  size: A4;
+                  margin: 20mm;
                 }
-            }
-            setIsEditingNotes(false);
-        }, [localNotes, session.notes, session.id, updateSession, addNotification]);
+                body { 
+                  font-family: 'Inter', sans-serif; 
+                  background-color: white; 
+                  color: #1f2937; 
+                  -webkit-print-color-adjust: exact; 
+                  print-color-adjust: exact;
+                  font-size: 10pt;
+                }
+                .print-container { 
+                  display: flex;
+                  flex-direction: column;
+                  height: 100%;
+                }
+                main {
+                    flex-grow: 1;
+                }
+                .header { text-align: center; margin-bottom: 1.5rem; }
+                .header img { 
+                    height: 50px; 
+                    margin-bottom: 0.75rem; 
+                    filter: invert(1);
+                }
+                .header p { margin: 1px 0; font-size: 0.9em; color: #4b5563; }
+                .footer { 
+                    text-align: center;
+                    padding-top: 1rem; 
+                    margin-top: auto;
+                    font-size: 0.8em; 
+                    color: #6b7280;
+                    border-top: 1px solid #d1d5db;
+                }
+                .content-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 1rem;
+                }
+                .section {
+                    border: 1px solid #9ca3af;
+                    border-radius: 8px;
+                    padding: 1rem;
+                    break-inside: avoid;
+                    overflow: hidden;
+                }
+                .section-title { 
+                  font-size: 1.1em; 
+                  font-weight: 600; 
+                  color: #111827;
+                  background-color: #f3f4f6;
+                  padding: 0.75rem;
+                  margin: -1rem -1rem 1rem -1rem;
+                  border-bottom: 1px solid #9ca3af;
+                }
+                .details-list p {
+                    margin: 0.35rem 0;
+                    font-size: 1em;
+                }
+                .details-list strong {
+                    font-weight: 600;
+                    color: #374151;
+                    margin-right: 0.5rem;
+                }
+                .full-width {
+                    grid-column: span 2;
+                }
+                .notes { 
+                  background-color: #f9fafb; 
+                  border: 1px solid #f0f0f0; 
+                  padding: 0.75rem; 
+                  border-radius: 6px; 
+                  white-space: pre-wrap; 
+                  font-size: 0.95em;
+                  word-wrap: break-word;
+                  margin-top: 0.5rem;
+                }
+                table { width: 100%; border-collapse: collapse; font-size: 0.95em; }
+                th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #d1d5db; }
+                th { background-color: #f9fafb; font-weight: 600; color: #374151;}
+                .summary-table-container { display: flex; justify-content: flex-start; margin-top: 1rem; }
+                .summary-table { width: 50%; border: none; }
+                .summary-table td { text-align: right; padding: 0.25rem 0; border: none; }
+                .summary-table td:first-child { text-align: left; font-weight: 600; }
+              </style>
+            </head>
+            <body>
+              <div class="print-container">
+                <div class="header">
+                    <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Logo Keii Portillo">
+                    <p>Kaii Portillo Fotografía</p>
+                    <p>2477238364</p>
+                    <p>@keiiportillo_fotografía</p>
+                    <p>Pergamino - Bs As</p>
+                </div>
 
-        React.useEffect(() => {
-            if (isEditingNotes) {
-                notesTextareaRef.current?.focus();
-                notesTextareaRef.current?.select();
-            }
-        }, [isEditingNotes]);
-        
-        const handlePrint = React.useCallback(() => {
-            const paymentStatus = remaining <= 0 ? 'Pagado' : 'Pendiente';
-            const formattedFullDate = session.date ? new Date(session.date + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'Fecha pendiente';
-
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = session.notes;
-            const sanitizedNotes = tempDiv.textContent || tempDiv.innerText || "";
-
-            const printContent = `
-              <html>
-                <head>
-                  <title>Keii Portillo - Fotografía</title>
-                  <style>
-                    @import url('https://rsms.me/inter/inter.css');
-                    @page {
-                      size: A4;
-                      margin: 20mm;
-                    }
-                    body { 
-                      font-family: 'Inter', sans-serif; 
-                      background-color: white; 
-                      color: #1f2937; 
-                      -webkit-print-color-adjust: exact; 
-                      print-color-adjust: exact;
-                      font-size: 10pt;
-                    }
-                    .print-container { 
-                      display: flex;
-                      flex-direction: column;
-                      height: 100%;
-                    }
-                    main {
-                        flex-grow: 1;
-                    }
-                    .header { text-align: center; margin-bottom: 1.5rem; }
-                    .header img { 
-                        height: 50px; 
-                        margin-bottom: 0.75rem; 
-                        filter: invert(1);
-                    }
-                    .header p { margin: 1px 0; font-size: 0.9em; color: #4b5563; }
-                    .footer { 
-                        text-align: center;
-                        padding-top: 1rem; 
-                        margin-top: auto;
-                        font-size: 0.8em; 
-                        color: #6b7280;
-                        border-top: 1px solid #d1d5db;
-                    }
-                    .content-grid {
-                        display: grid;
-                        grid-template-columns: 1fr 1fr;
-                        gap: 1rem;
-                    }
-                    .section {
-                        border: 1px solid #9ca3af;
-                        border-radius: 8px;
-                        padding: 1rem;
-                        break-inside: avoid;
-                        overflow: hidden;
-                    }
-                    .section-title { 
-                      font-size: 1.1em; 
-                      font-weight: 600; 
-                      color: #111827;
-                      background-color: #f3f4f6;
-                      padding: 0.75rem;
-                      margin: -1rem -1rem 1rem -1rem;
-                      border-bottom: 1px solid #9ca3af;
-                    }
-                    .details-list p {
-                        margin: 0.35rem 0;
-                        font-size: 1em;
-                    }
-                    .details-list strong {
-                        font-weight: 600;
-                        color: #374151;
-                        margin-right: 0.5rem;
-                    }
-                    .full-width {
-                        grid-column: span 2;
-                    }
-                    .notes { 
-                      background-color: #f9fafb; 
-                      border: 1px solid #f0f0f0; 
-                      padding: 0.75rem; 
-                      border-radius: 6px; 
-                      white-space: pre-wrap; 
-                      font-size: 0.95em;
-                      word-wrap: break-word;
-                      margin-top: 0.5rem;
-                    }
-                    table { width: 100%; border-collapse: collapse; font-size: 0.95em; }
-                    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #d1d5db; }
-                    th { background-color: #f9fafb; font-weight: 600; color: #374151;}
-                    .summary-table-container { display: flex; justify-content: flex-start; margin-top: 1rem; }
-                    .summary-table { width: 50%; border: none; }
-                    .summary-table td { text-align: right; padding: 0.25rem 0; border: none; }
-                    .summary-table td:first-child { text-align: left; font-weight: 600; }
-                  </style>
-                </head>
-                <body>
-                  <div class="print-container">
-                    <div class="header">
-                        <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Logo Keii Portillo">
-                        <p>Kaii Portillo Fotografía</p>
-                        <p>2477238364</p>
-                        <p>@keiiportillo_fotografía</p>
-                        <p>Pergamino - Bs As</p>
-                    </div>
-
-                    <main>
-                        <div class="content-grid">
-                            <div class="section">
-                                <h2 class="section-title">Detalle del Cliente y Servicio</h2>
-                                <div class="details-list">
-                                    <p><strong>Cliente:</strong>${session.client_name}</p>
-                                    <p><strong>Contacto:</strong>${session.contact}</p>
-                                    <p><strong>Servicio:</strong>${session.service_type}</p>
-                                    <p><strong>Costo:</strong>$${session.price.toLocaleString('es-AR')}</p>
-                                </div>
+                <main>
+                    <div class="content-grid">
+                        <div class="section">
+                            <h2 class="section-title">Detalle del Cliente y Servicio</h2>
+                            <div class="details-list">
+                                <p><strong>Cliente:</strong>${session.client_name}</p>
+                                <p><strong>Contacto:</strong>${session.contact}</p>
+                                <p><strong>Servicio:</strong>${session.service_type}</p>
+                                <p><strong>Costo:</strong>$${session.price.toLocaleString('es-AR')}</p>
                             </div>
+                        </div>
 
-                            <div class="section">
-                                <h2 class="section-title">Detalle de la Sesión</h2>
-                                <div class="details-list">
-                                    <p><strong>Fecha:</strong>${formattedFullDate}</p>
-                                    <p><strong>Hora:</strong>${session.time ? session.time + ' hs' : 'Horario pendiente'}</p>
-                                    <p><strong>Lugar:</strong>${session.location}</p>
-                                </div>
+                        <div class="section">
+                            <h2 class="section-title">Detalle de la Sesión</h2>
+                            <div class="details-list">
+                                <p><strong>Fecha:</strong>${formattedFullDate}</p>
+                                <p><strong>Hora:</strong>${session.time ? session.time + ' hs' : 'Horario pendiente'}</p>
+                                <p><strong>Lugar:</strong>${session.location}</p>
                             </div>
+                        </div>
 
-                            <div class="section full-width">
-                                <h2 class="section-title">Pagos</h2>
-                                <table>
-                                  <thead><tr><th>Fecha</th><th>Monto</th><th>Método</th></tr></thead>
+                        <div class="section full-width">
+                            <h2 class="section-title">Pagos</h2>
+                            <table>
+                              <thead><tr><th>Fecha</th><th>Monto</th><th>Método</th></tr></thead>
+                              <tbody>
+                                ${session.payments.length > 0 ? session.payments.map((p: Payment) => `
+                                  <tr>
+                                    <td>${formatPaymentDate(p.date)}</td>
+                                    <td>$${Number(p.amount).toLocaleString('es-AR')}</td>
+                                    <td>${p.method}</td>
+                                  </tr>
+                                `).join('') : `<tr><td colspan="3" style="text-align:center; padding: 1rem; color: #6b7280;">No hay pagos registrados.</td></tr>`}
+                              </tbody>
+                            </table>
+                            <div class="summary-table-container">
+                                <table class="summary-table">
                                   <tbody>
-                                    ${session.payments.length > 0 ? session.payments.map(p => `
-                                      <tr>
-                                        <td>${formatPaymentDate(p.date)}</td>
-                                        <td>$${Number(p.amount).toLocaleString('es-AR')}</td>
-                                        <td>${p.method}</td>
-                                      </tr>
-                                    `).join('') : `<tr><td colspan="3" style="text-align:center; padding: 1rem; color: #6b7280;">No hay pagos registrados.</td></tr>`}
+                                    <tr><td>Total pagado:</td><td>$${totalPaid.toLocaleString('es-AR')}</td></tr>
+                                    <tr><td>Restante:</td><td>$${remaining.toLocaleString('es-AR')}</td></tr>
+                                    <tr><td><strong>Estado:</strong></td><td><strong>${paymentStatus}</strong></td></tr>
                                   </tbody>
                                 </table>
-                                <div class="summary-table-container">
-                                    <table class="summary-table">
-                                      <tbody>
-                                        <tr><td>Total pagado:</td><td>$${totalPaid.toLocaleString('es-AR')}</td></tr>
-                                        <tr><td>Restante:</td><td>$${remaining.toLocaleString('es-AR')}</td></tr>
-                                        <tr><td><strong>Estado:</strong></td><td><strong>${paymentStatus}</strong></td></tr>
-                                      </tbody>
-                                    </table>
-                                </div>
                             </div>
-
-                            ${session.notes ? `
-                            <div class="section full-width">
-                                <h2 class="section-title">Anotaciones</h2>
-                                <div class="notes">${sanitizedNotes}</div>
-                            </div>
-                            ` : ''}
                         </div>
-                    </main>
 
-                    <div class="footer">
-                        <p>2025 - Keii Portillo Fotografía - Documento no válido como factura</p>
-                    </div>
-                  </div>
-                </body>
-              </html>
-            `;
-            
-            const printWindow = window.open('', '_blank');
-            if (printWindow) {
-                printWindow.document.write(printContent);
-                printWindow.document.close();
-                printWindow.onload = () => {
-                    printWindow.print();
-                };
-            } else {
-                addNotification('Por favor, habilita las ventanas emergentes para imprimir.', 'error');
-            }
-        }, [session, totalPaid, remaining, addNotification]);
-
-        return (
-            <React.Fragment>
-                <div className={`flex flex-col bg-zinc-800 rounded-xl shadow-lg border ${sessionState.borderColor} transition-all duration-300`}>
-                    <div className="p-4 border-b border-zinc-700">
-                        <div className="flex justify-between items-start gap-3">
-                            <h3 className="font-bold text-white text-lg flex-1 truncate" title={session.client_name}>
-                               {session.client_name}
-                            </h3>
-                             <span className={`px-2 py-1 text-xs font-bold rounded-full ${sessionState.color}`}>
-                                {sessionState.text}
-                            </span>
+                        ${session.notes ? `
+                        <div class="section full-width">
+                            <h2 class="section-title">Anotaciones</h2>
+                            <div class="notes">${sanitizedNotes}</div>
                         </div>
-                        <p className="text-sm text-zinc-400">{session.service_type}</p>
+                        ` : ''}
+                    </div>
+                </main>
+
+                <div class="footer">
+                    <p>2025 - Keii Portillo Fotografía - Documento no válido como factura</p>
+                </div>
+              </div>
+            </body>
+          </html>
+        `;
+        
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+            printWindow.document.write(printContent);
+            printWindow.document.close();
+            printWindow.onload = () => {
+                printWindow.print();
+            };
+        } else {
+            addNotification('Por favor, habilita las ventanas emergentes para imprimir.', 'error');
+        }
+    }, [session, totalPaid, remaining, addNotification]);
+
+    return (
+        <>
+            <div className={`flex flex-col bg-zinc-800 rounded-xl shadow-lg border ${sessionState.borderColor} transition-all duration-300`}>
+                <div className="p-4 border-b border-zinc-700">
+                    <div className="flex justify-between items-start gap-3">
+                        <h3 className="font-bold text-white text-lg flex-1 truncate" title={session.client_name}>
+                           {session.client_name}
+                        </h3>
+                         <span className={`px-2 py-1 text-xs font-bold rounded-full ${sessionState.color}`}>
+                            {sessionState.text}
+                        </span>
+                    </div>
+                    <p className="text-sm text-zinc-400">{session.service_type}</p>
+                </div>
+
+                <div className="p-4 space-y-4 flex-grow">
+                     {/* Financial Status */}
+                    <div>
+                        <div className="flex justify-between items-center mb-1 text-sm">
+                            <span className="text-zinc-300">Pagado</span>
+                            <span className="font-semibold text-white">${totalPaid.toLocaleString('es-AR')} / ${session.price.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="w-full bg-zinc-700 rounded-full h-2.5">
+                            <div className="bg-green-500 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
+                        </div>
+                        {remaining > 0 && <p className="text-right text-xs text-yellow-400 mt-1">Restan ${remaining.toLocaleString('es-AR')}</p>}
                     </div>
 
-                    <div className="p-4 space-y-4 flex-grow">
+                    {session.payments.length > 0 && (
                         <div>
-                            <div className="flex justify-between items-center mb-1 text-sm">
-                                <span className="text-zinc-300">Pagado</span>
-                                <span className="font-semibold text-white">${totalPaid.toLocaleString('es-AR')} / ${session.price.toLocaleString('es-AR')}</span>
-                            </div>
-                            <div className="w-full bg-zinc-700 rounded-full h-2.5">
-                                <div className="bg-green-500 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
-                            </div>
-                            {remaining > 0 && <p className="text-right text-xs text-yellow-400 mt-1">Restan ${remaining.toLocaleString('es-AR')}</p>}
-                        </div>
-
-                        {session.payments.length > 0 && (
-                            <div>
-                                <button
-                                    onClick={() => setIsPaymentsVisible(prev => !prev)}
-                                    className="w-full flex justify-between items-center text-left text-sm font-medium text-zinc-300 hover:text-white py-1"
-                                    aria-expanded={isPaymentsVisible}
-                                >
-                                    <span>Ver historial de pagos ({session.payments.length})</span>
-                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transform transition-transform duration-200 ${isPaymentsVisible ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                    </svg>
-                                </button>
-                                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isPaymentsVisible ? 'max-h-96' : 'max-h-0'}`}>
-                                    <div className="border-t border-zinc-700/50 mt-1 pt-2 pr-2 space-y-2">
-                                        {session.payments.map((p) => (
-                                            <div key={p.id} className="flex justify-between items-center text-xs">
-                                                <span className="text-zinc-400">{formatPaymentDate(p.date)}</span>
-                                                <span className="text-zinc-300">{p.method}</span>
-                                                <span className="font-semibold text-white">${Number(p.amount).toLocaleString('es-AR')}</span>
-                                            </div>
-                                        ))}
-                                    </div>
+                            <button
+                                onClick={() => setIsPaymentsVisible(prev => !prev)}
+                                className="w-full flex justify-between items-center text-left text-sm font-medium text-zinc-300 hover:text-white py-1"
+                                aria-expanded={isPaymentsVisible}
+                            >
+                                <span>Ver historial de pagos ({session.payments.length})</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transform transition-transform duration-200 ${isPaymentsVisible ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+                            <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isPaymentsVisible ? 'max-h-96' : 'max-h-0'}`}>
+                                <div className="border-t border-zinc-700/50 mt-1 pt-2 pr-2 space-y-2">
+                                    {session.payments.map((p) => (
+                                        <div key={p.id} className="flex justify-between items-center text-xs">
+                                            <span className="text-zinc-400">{formatPaymentDate(p.date)}</span>
+                                            <span className="text-zinc-300">{p.method}</span>
+                                            <span className="font-semibold text-white">${Number(p.amount).toLocaleString('es-AR')}</span>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-                        )}
-
-                        <div className="text-sm space-y-2">
-                            <div className="flex items-center gap-2">
-                                <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                                <span className="text-zinc-300">{formatDate(session.date)}</span>
-                                {session.is_rescheduled && <HistoryIcon tooltip="Reprogramado" />}
-                            </div>
-                             <div className="flex items-center gap-2">
-                                <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                 <span className="text-zinc-300">{session.time || 'Horario pendiente'}</span>
-                                 {session.is_time_changed && <HistoryIcon tooltip="Horario cambiado" />}
-                            </div>
-                            <div className="flex items-start gap-2">
-                                 <svg className="w-4 h-4 text-zinc-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                <span className="text-zinc-300">{session.location}</span>
-                                {session.is_relocated && <HistoryIcon tooltip="Relocalizado" />}
-                            </div>
-                        </div>
-
-                        <div className="pt-2">
-                            <label htmlFor={`notes-${session.id}`} className="text-xs text-zinc-400 mb-1 font-semibold">Anotaciones:</label>
-                            {isEditingNotes ? (
-                                <textarea
-                                    id={`notes-${session.id}`}
-                                    ref={notesTextareaRef}
-                                    value={localNotes}
-                                    onChange={(e) => setLocalNotes(e.target.value)}
-                                    onBlur={handleNotesSave}
-                                    className="w-full text-sm text-zinc-200 bg-zinc-700 p-2 rounded-md border border-white/30 focus:ring-1 focus:ring-white focus:outline-none transition"
-                                    rows={4}
-                                />
-                            ) : (
-                                <div
-                                    onClick={() => setIsEditingNotes(true)}
-                                    className="w-full text-sm text-zinc-300 bg-zinc-900/50 p-2 rounded-md whitespace-pre-wrap min-h-[40px] cursor-pointer hover:bg-zinc-700 transition-colors"
-                                >
-                                    {session.notes ? (
-                                        session.notes
-                                    ) : (
-                                        <span className="text-zinc-500 italic">Agregar anotaciones...</span>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="px-4 py-3 bg-zinc-900/50 rounded-b-xl border-t border-zinc-700 flex items-center justify-end space-x-2">
-                        {session.status === SessionStatus.ACTIVE && remaining > 0 && (
-                            <button onClick={() => setAddPaymentModalOpen(true)} className="text-xs font-semibold text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md transition-colors" title="Añadir Pago">
-                                Añadir Pago
-                            </button>
-                        )}
-                        
-                        <button onClick={() => setEditModalOpen(true)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-full transition-colors" title="Editar Sesión">
-                           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
-                        </button>
-                        <button onClick={handlePrint} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-full transition-colors" title="Imprimir Resumen">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h1v-4a1 1 0 011-1h8a1 1 0 011 1v4h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" /></svg>
-                        </button>
-                        
-                        {session.status === SessionStatus.ACTIVE ? (
-                            <button onClick={() => setCancelModalOpen(true)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors" title="Cancelar Sesión">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
-                            </button>
-                        ) : (
-                             <button onClick={() => setRestoreModalOpen(true)} className="p-2 text-zinc-400 hover:text-green-500 hover:bg-green-900/50 rounded-full transition-colors" title="Restaurar Sesión">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-10.707a1 1 0 00-1.414-1.414L9 9.586 7.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {isAddPaymentModalOpen && (
-                    <AddPaymentModal session={session} onClose={() => setAddPaymentModalOpen(false)} />
-                )}
-
-                {isEditModalOpen && (
-                    <EditSessionModal session={session} onClose={() => setEditModalOpen(false)} />
-                )}
-
-                {isCancelModalOpen && (
-                    <ConfirmationModal
-                        isOpen={isCancelModalOpen}
-                        onClose={() => setCancelModalOpen(false)}
-                        onConfirm={handleCancel}
-                        title="Cancelar Sesión"
-                        message="¿Estás seguro de que quieres cancelar esta sesión? Esta acción la moverá a la sección de 'Canceladas'."
-                        confirmText="Sí, Cancelar"
-                        confirmButtonColor="bg-red-600 hover:bg-red-700 focus:ring-red-500"
-                    />
-                )}
-
-                {isRestoreModalOpen && (
-                    <ConfirmationModal
-                        isOpen={isRestoreModalOpen}
-                        onClose={() => setRestoreModalOpen(false)}
-                        onConfirm={handleRestore}
-                        title="Restaurar Sesión"
-                        message="¿Estás seguro de que quieres restaurar esta sesión? Volverá a estar activa."
-                        confirmText="Sí, Restaurar"
-                        confirmButtonColor="bg-green-600 hover:bg-green-700 focus:ring-green-500"
-                    />
-                )}
-            </React.Fragment>
-        );
-    };
-
-
-    // --- From components/Dashboard.tsx ---
-    const Dashboard = () => {
-        const { sessions } = useApp();
-
-        const upcomingSessions = React.useMemo(() => {
-            const now = new Date();
-
-            const activeSessions = sessions.filter(s => s.status === SessionStatus.ACTIVE);
-            const pendingDateSessions = activeSessions.filter(s => !s.date);
-
-            const scheduledUpcomingSessions = activeSessions.filter(s => {
-                if (!s.date) return false;
-                const sessionDateTime = new Date(`${s.date}T${s.time || '00:00:00'}`);
-                return sessionDateTime >= now;
-            });
-
-            scheduledUpcomingSessions.sort((a, b) => {
-                const dateA = new Date(`${a.date}T${a.time || '00:00:00'}`);
-                const dateB = new Date(`${b.date}T${b.time || '00:00:00'}`);
-                return dateA.getTime() - dateB.getTime();
-            });
-
-            return [...pendingDateSessions, ...scheduledUpcomingSessions];
-        }, [sessions]);
-
-        if (upcomingSessions.length === 0) {
-            return (
-                <div className="text-center py-20 px-6 bg-zinc-800 rounded-lg shadow-lg">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    <h3 className="mt-2 text-lg font-medium text-white">No hay sesiones próximas</h3>
-                    <p className="mt-1 text-sm text-zinc-400">
-                        Añade una nueva sesión para empezar a organizarte.
-                    </p>
-                </div>
-            );
-        }
-        
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {upcomingSessions.map(session => (
-                    <SessionCard key={session.id} session={session} />
-                ))}
-            </div>
-        );
-    };
-
-    // --- From components/FinishedSessions.tsx ---
-    const FinishedSessions = () => {
-        const { sessions } = useApp();
-
-        const finishedSessions = React.useMemo(() => {
-            const now = new Date();
-            return sessions
-                .filter(s => {
-                    if (s.status !== SessionStatus.ACTIVE || !s.date) {
-                        return false;
-                    }
-                    const sessionDateTime = new Date(`${s.date}T${s.time || '00:00:00'}`);
-                    return sessionDateTime < now;
-                })
-                .sort((a, b) => {
-                    const dateA = new Date(`${a.date}T${a.time || '00:00:00'}`);
-                    const dateB = new Date(`${b.date}T${b.time || '00:00:00'}`);
-                    return dateB.getTime() - dateA.getTime();
-                });
-        }, [sessions]);
-
-        if (finishedSessions.length === 0) {
-            return (
-                <div className="text-center py-20 px-6 bg-zinc-800 rounded-lg shadow-lg">
-                     <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <h3 className="mt-2 text-lg font-medium text-white">No hay sesiones finalizadas</h3>
-                    <p className="mt-1 text-sm text-zinc-400">
-                        Las sesiones pasadas aparecerán aquí.
-                    </p>
-                </div>
-            );
-        }
-        
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {finishedSessions.map(session => (
-                    <SessionCard key={session.id} session={session} />
-                ))}
-            </div>
-        );
-    };
-
-    // --- From components/CancelledSessions.tsx ---
-    const CancelledSessions = () => {
-        const { sessions } = useApp();
-
-        const cancelledSessions = React.useMemo(() => {
-            return sessions
-                .filter(s => s.status === SessionStatus.CANCELLED)
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        }, [sessions]);
-
-        if (cancelledSessions.length === 0) {
-            return (
-                <div className="text-center py-20 px-6 bg-zinc-800 rounded-lg shadow-lg">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                    </svg>
-                    <h3 className="mt-2 text-lg font-medium text-white">No hay sesiones canceladas</h3>
-                    <p className="mt-1 text-sm text-zinc-400">
-                        Las sesiones que canceles aparecerán en esta sección.
-                    </p>
-                </div>
-            );
-        }
-        
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {cancelledSessions.map(session => (
-                    <SessionCard key={session.id} session={session} />
-                ))}
-            </div>
-        );
-    };
-    
-    // --- From components/Planner.tsx ---
-    const abbreviateService = (serviceName) => {
-        const lowerCaseName = serviceName.toLowerCase();
-        let type = '';
-        if (lowerCaseName.includes('exterior')) {
-            type = 'E.';
-        } else if (lowerCaseName.includes('estudio')) {
-            type = 'S.';
-        }
-
-        const middle = lowerCaseName
-            .replace('sesión', '')
-            .replace(' en ', ' ')
-            .replace('estudio', '')
-            .replace('exterior', '')
-            .trim()
-            .split(' ')
-            .filter(Boolean)
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ');
-
-        const result = `S. ${middle} ${type}`;
-        return result.replace(/\s+/g, ' ').trim();
-    };
-
-    const Planner = () => {
-        const { sessions } = useApp();
-        const [currentDate, setCurrentDate] = React.useState(new Date());
-        const [selectedDate, setSelectedDate] = React.useState(() => {
-            const today = new Date();
-            return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        });
-
-        const sessionsByDate = React.useMemo(() => {
-            return sessions.reduce((acc, session) => {
-                if (!session.date) {
-                    return acc;
-                }
-                const date = session.date;
-                if (!acc[date]) {
-                    acc[date] = [];
-                }
-                acc[date].push(session);
-                return acc;
-            }, {});
-        }, [sessions]);
-
-        const changeMonth = (offset) => {
-            setCurrentDate(prevDate => {
-                const newDate = new Date(prevDate);
-                newDate.setDate(1);
-                newDate.setMonth(newDate.getMonth() + offset);
-                return newDate;
-            });
-        };
-        
-        const selectedDaySessions = React.useMemo(() => {
-            if (!selectedDate) return [];
-            return (sessionsByDate[selectedDate] || []).sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
-        }, [selectedDate, sessionsByDate]);
-
-        const formatSelectedDateHeader = (dateStr) => {
-            if (!dateStr) return '';
-            const date = new Date(dateStr + 'T00:00:00');
-            const formatted = date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-            return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-        };
-
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        const firstDayOfMonth = new Date(year, month, 1).getDay();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const startDayIndex = (firstDayOfMonth === 0) ? 6 : firstDayOfMonth - 1;
-
-        const calendarDays = [];
-        for (let i = 0; i < startDayIndex; i++) {
-            calendarDays.push(<div key={`blank-start-${i}`} className="border-r border-b border-zinc-700 bg-zinc-900/50 aspect-square"></div>);
-        }
-        
-        for (let day = 1; day <= daysInMonth; day++) {
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const daySessions = (sessionsByDate[dateStr] || []).sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
-            
-            const today = new Date();
-            const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-            const isSelected = selectedDate === dateStr;
-
-            calendarDays.push(
-                <div
-                    key={day}
-                    onClick={() => setSelectedDate(dateStr)}
-                    className={`relative p-1 border-r border-b border-zinc-700 flex flex-col aspect-square cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-zinc-700' : 'hover:bg-zinc-700/50'}`}
-                >
-                    <div className={`text-sm font-semibold self-start mb-1 ${isToday ? 'bg-white text-black rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0' : 'text-zinc-300'}`}>
-                        {day}
-                    </div>
-
-                    {/* Mobile View: Counter */}
-                    {daySessions.length > 0 && (
-                        <div className="md:hidden absolute top-1.5 right-1.5 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold shadow-md">
-                            {daySessions.length}
                         </div>
                     )}
-                    
-                    {/* Desktop View: Session List */}
-                    <div className="hidden md:flex flex-col flex-grow overflow-y-auto no-scrollbar space-y-1">
-                        {daySessions.map(session => (
-                            <div key={session.id} className="text-xs bg-zinc-900/60 p-1 rounded text-left flex-shrink-0">
-                                <p className="font-semibold text-white truncate leading-tight" title={session.client_name}>{session.client_name}</p>
-                                <p className="text-zinc-400 truncate leading-tight" title={`${session.time || ''} - ${session.service_type}`}>
-                                    {session.time ? `${session.time.substring(0, 5)}hs` : 'Hora pend.'} - {abbreviateService(session.service_type)}
-                                </p>
-                            </div>
-                        ))}
+
+                    {/* Session Details */}
+                    <div className="text-sm space-y-2">
+                        <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            <span className="text-zinc-300">{formatDate(session.date)}</span>
+                            {session.is_rescheduled && <HistoryIcon tooltip="Reprogramado" />}
+                        </div>
+                         <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                             <span className="text-zinc-300">{session.time || 'Horario pendiente'}</span>
+                             {session.is_time_changed && <HistoryIcon tooltip="Horario cambiado" />}
+                        </div>
+                        <div className="flex items-start gap-2">
+                             <svg className="w-4 h-4 text-zinc-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            <span className="text-zinc-300">{session.location}</span>
+                            {session.is_relocated && <HistoryIcon tooltip="Relocalizado" />}
+                        </div>
                     </div>
-                </div>
-            );
-        }
-        
-        const totalCells = calendarDays.length % 7 === 0 ? calendarDays.length : calendarDays.length + (7 - calendarDays.length % 7);
-        const finalCellsCount = totalCells < 35 ? 35 : totalCells;
 
-        while(calendarDays.length < finalCellsCount) {
-            calendarDays.push(<div key={`blank-end-${calendarDays.length}`} className="border-r border-b border-zinc-700 bg-zinc-900/50 aspect-square"></div>);
-        }
-
-        return (
-            <div className="bg-zinc-800 rounded-lg shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-zinc-700 transition-colors" aria-label="Mes anterior">
-                        <svg className="w-6 h-6 text-zinc-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
-                    </button>
-                    <h2 className="text-lg font-bold text-white capitalize">
-                        {currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                    </h2>
-                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-zinc-700 transition-colors" aria-label="Mes siguiente">
-                        <svg className="w-6 h-6 text-zinc-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
-                    </button>
-                </div>
-                
-                <div className="grid grid-cols-7 text-center text-xs font-bold text-zinc-400 border-b border-zinc-700">
-                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(day => (
-                        <div key={day} className="py-2 border-r border-zinc-700 last:border-r-0">{day}</div>
-                    ))}
-                </div>
-
-                <div className="grid grid-cols-7">
-                    {calendarDays}
-                </div>
-
-                <div className="p-4 sm:p-6 border-t border-zinc-700">
-                    <h3 className="text-lg font-bold text-white">
-                        {selectedDate ? `Detalles para el ${formatSelectedDateHeader(selectedDate)}` : 'Selecciona un día'}
-                    </h3>
-                    <div className="mt-4 space-y-3">
-                        {selectedDaySessions.length > 0 ? (
-                            selectedDaySessions.map(session => {
-                                const dayName = new Date(session.date + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'long' });
-                                const dayNumber = new Date(session.date + 'T00:00:00').getDate();
-                                const formattedDay = `${dayName.charAt(0).toUpperCase() + dayName.slice(1)} ${dayNumber}`;
-                                
-                                const fullText = `${formattedDay} - ${session.time ? session.time + 'hs' : 'Hora pendiente'} - ${session.service_type} - ${session.location} - ${session.client_name}`;
-
-                                return (
-                                    <div key={session.id} className="bg-zinc-900/70 p-3 rounded-lg text-sm text-white" title={fullText}>
-                                       <p className="font-semibold text-white truncate">{session.client_name}</p>
-                                       <p className="text-zinc-400 truncate">{`${session.time ? session.time + 'hs' : 'Hora pendiente'} - ${session.service_type}`}</p>
-                                    </div>
-                                );
-                            })
+                    <div className="pt-2">
+                        <label htmlFor={`notes-${session.id}`} className="text-xs text-zinc-400 mb-1 font-semibold">Anotaciones:</label>
+                        {isEditingNotes ? (
+                            <textarea
+                                id={`notes-${session.id}`}
+                                ref={notesTextareaRef}
+                                value={localNotes}
+                                onChange={(e) => setLocalNotes(e.target.value)}
+                                onBlur={handleNotesSave}
+                                className="w-full text-sm text-zinc-200 bg-zinc-700 p-2 rounded-md border border-white/30 focus:ring-1 focus:ring-white focus:outline-none transition"
+                                rows={4}
+                            />
                         ) : (
-                            <div className="text-center py-6">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-10 w-10 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0h18M12 12.75h.008v.008H12v-.008z" />
-                                </svg>
-                                <p className="mt-2 text-zinc-400 italic">No hay sesiones para el día seleccionado.</p>
+                            <div
+                                onClick={() => setIsEditingNotes(true)}
+                                className="w-full text-sm text-zinc-300 bg-zinc-900/50 p-2 rounded-md whitespace-pre-wrap min-h-[40px] cursor-pointer hover:bg-zinc-700 transition-colors"
+                            >
+                                {session.notes ? (
+                                    session.notes
+                                ) : (
+                                    <span className="text-zinc-500 italic">Agregar anotaciones...</span>
+                                )}
                             </div>
                         )}
                     </div>
                 </div>
+
+                <div className="px-4 py-3 bg-zinc-900/50 rounded-b-xl border-t border-zinc-700 flex items-center justify-end space-x-2">
+                    {session.status === SessionStatus.ACTIVE && remaining > 0 && (
+                        <button onClick={() => setAddPaymentModalOpen(true)} className="text-xs font-semibold text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md transition-colors" title="Añadir Pago">
+                            Añadir Pago
+                        </button>
+                    )}
+                    
+                    <button onClick={() => setEditModalOpen(true)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-full transition-colors" title="Editar Sesión">
+                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
+                    </button>
+                    <button onClick={handlePrint} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-700 rounded-full transition-colors" title="Imprimir Resumen">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h1v-4a1 1 0 011-1h8a1 1 0 011 1v4h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" /></svg>
+                    </button>
+                    
+                    {session.status === SessionStatus.ACTIVE && !isFinished && (
+                        <button onClick={() => setCancelModalOpen(true)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors" title="Cancelar Sesión">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                        </button>
+                    )}
+                    
+                    {session.status === SessionStatus.CANCELLED && (
+                        <>
+                            <button onClick={() => setRestoreModalOpen(true)} className="p-2 text-zinc-400 hover:text-green-500 hover:bg-green-900/50 rounded-full transition-colors" title="Restaurar Sesión">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-10.707a1 1 0 00-1.414-1.414L9 9.586 7.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                            </button>
+                             <button onClick={() => setDeleteModalOpen(true)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors" title="Eliminar Permanentemente">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
-        );
-    };
 
-    // --- From components/Settings.tsx ---
-    const Settings = () => {
-        const { prices, updatePrices, serviceTypes, addServiceType, sessions, deleteServiceType, addNotification } = useApp();
-        const [localPrices, setLocalPrices] = React.useState(prices);
+            {isAddPaymentModalOpen && (
+                <AddPaymentModal session={session} onClose={() => setAddPaymentModalOpen(false)} />
+            )}
 
-        const [newServiceName, setNewServiceName] = React.useState('');
-        const [newServicePrice, setNewServicePrice] = React.useState('');
-        const [isSubmitting, setIsSubmitting] = React.useState(false);
-        
-        const [confirmModalState, setConfirmModalState] = React.useState({ isOpen: false, serviceName: '' });
+            {isEditModalOpen && (
+                <EditSessionModal session={session} onClose={() => setEditModalOpen(false)} />
+            )}
 
-        const usedServices = React.useMemo(() => new Set(sessions.map(s => s.service_type)), [sessions]);
-
-        React.useEffect(() => {
-            setLocalPrices(prices);
-        }, [prices]);
-
-        const handlePriceChange = (service, value) => {
-            const newPrice = Number(value);
-            if (!isNaN(newPrice)) {
-                setLocalPrices(prev => ({ ...prev, [service]: newPrice }));
-            }
-        };
-
-        const handleUpdatePricesSubmit = async (e) => {
-            e.preventDefault();
-            setIsSubmitting(true);
-            try {
-                await updatePrices(localPrices);
-                addNotification('Precios guardados correctamente.', 'success');
-            } catch (err) {
-                addNotification(`Error al guardar: ${err.message}`, 'error');
-            } finally {
-                setIsSubmitting(false);
-            }
-        };
-
-        const handleAddServiceSubmit = async (e) => {
-            e.preventDefault();
-            if (!newServiceName.trim() || !newServicePrice || Number(newServicePrice) <= 0) {
-                addNotification('Por favor, ingrese un nombre y un precio válido.', 'error');
-                return;
-            }
-            setIsSubmitting(true);
-            try {
-                await addServiceType(newServiceName.trim(), Number(newServicePrice));
-                addNotification(`Servicio "${newServiceName.trim()}" agregado.`, 'success');
-                setNewServiceName('');
-                setNewServicePrice('');
-            } catch (err) {
-                addNotification(`Error: ${err.message}`, 'error');
-            } finally {
-                setIsSubmitting(false);
-            }
-        };
-
-        const handleDeleteService = (serviceName) => {
-            setConfirmModalState({ isOpen: true, serviceName });
-        };
-
-        const handleConfirmDelete = async () => {
-            const serviceName = confirmModalState.serviceName;
-            if (!serviceName) return;
-
-            setIsSubmitting(true);
-            setConfirmModalState({ isOpen: false, serviceName: '' });
-
-            try {
-                await deleteServiceType(serviceName);
-                addNotification(`Servicio "${serviceName}" eliminado correctamente.`, 'success');
-            } catch (err) {
-                let errorMessage = `Error al eliminar: ${err.message}`;
-                addNotification(errorMessage, 'error');
-            } finally {
-                setIsSubmitting(false);
-            }
-        };
-        
-        return (
-            <React.Fragment>
+            {isCancelModalOpen && (
                 <ConfirmationModal
-                    isOpen={confirmModalState.isOpen}
-                    onClose={() => setConfirmModalState({ isOpen: false, serviceName: '' })}
-                    onConfirm={handleConfirmDelete}
-                    title="Confirmar Eliminación"
-                    message={<React.Fragment>¿Estás seguro de que quieres eliminar el servicio "<strong>{confirmModalState.serviceName}</strong>"?<br/><br/>Esta acción no se puede deshacer.</React.Fragment>}
-                    confirmText="Sí, Eliminar"
+                    isOpen={isCancelModalOpen}
+                    onClose={() => setCancelModalOpen(false)}
+                    onConfirm={handleCancel}
+                    title="Cancelar Sesión"
+                    message="¿Estás seguro de que quieres cancelar esta sesión? Esta acción la moverá a la sección de 'Canceladas'."
+                    confirmText="Sí, Cancelar"
                     confirmButtonColor="bg-red-600 hover:bg-red-700 focus:ring-red-500"
                 />
-                <div className="max-w-4xl mx-auto space-y-8">
-                    <div className="bg-zinc-800 rounded-lg shadow-lg">
-                        <div className="p-6 border-b border-zinc-700">
-                            <h2 className="text-xl font-bold text-white">Configuración de Precios y Servicios</h2>
-                            <p className="mt-1 text-sm text-zinc-300">
-                                Gestiona tus servicios, establece sus precios y elimina los que ya no ofreces.
-                            </p>
-                        </div>
-                        <form onSubmit={handleUpdatePricesSubmit}>
-                            <div className="p-6">
-                                {serviceTypes.length > 0 ? (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-8">
-                                        {serviceTypes.map(service => {
-                                            const isUsed = usedServices.has(service);
-                                            return (
-                                            <div key={service}>
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <label htmlFor={service} className="block text-sm font-medium text-zinc-300 truncate" title={service}>{service}</label>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleDeleteService(service)}
-                                                        disabled={isUsed || isSubmitting}
-                                                        title={isUsed ? "Este servicio no se puede eliminar porque está en uso en sesiones existentes (activas, pasadas o canceladas)." : "Eliminar servicio"}
-                                                        className="p-1 rounded-full text-zinc-400 hover:text-red-500 hover:bg-red-900/50 disabled:hover:bg-transparent disabled:text-zinc-600 disabled:cursor-not-allowed transition-colors"
-                                                        aria-label={`Eliminar servicio ${service}`}
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                                <div className="relative rounded-lg shadow-sm">
-                                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                                        <span className="text-zinc-400 text-lg">$</span>
-                                                    </div>
-                                                    <input
-                                                        type="number"
-                                                        name={service}
-                                                        id={service}
-                                                        className="focus:ring-white focus:border-white block w-full pl-8 pr-16 py-3 text-base border-zinc-600 bg-zinc-700 text-white rounded-lg"
-                                                        placeholder="0"
-                                                        value={localPrices[service] || ''}
-                                                        onChange={e => handlePriceChange(service, e.target.value)}
-                                                        required
-                                                        min="0"
-                                                    />
-                                                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                                                        <span className="text-zinc-400 text-sm">
-                                                            ARS
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )})}
-                                    </div>
-                                ) : (
-                                    <p className="text-zinc-400 text-center py-4">No hay servicios para configurar. Añade uno nuevo a continuación.</p>
-                                )}
-                            </div>
-                            {serviceTypes.length > 0 && (
-                                <div className="px-6 py-4 bg-zinc-900/50 rounded-b-lg flex justify-end items-center space-x-4">
-                                    <button
-                                        type="submit"
-                                        disabled={isSubmitting}
-                                        className="px-4 py-2 text-sm font-medium text-black bg-white rounded-md shadow-sm hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white disabled:bg-zinc-400 disabled:cursor-not-allowed"
-                                    >
-                                        {isSubmitting ? 'Guardando...' : 'Guardar Precios'}
-                                    </button>
-                                </div>
-                            )}
-                        </form>
-                    </div>
+            )}
 
-                    <div className="bg-zinc-800 rounded-lg shadow-lg">
-                        <div className="p-6 border-b border-zinc-700">
-                            <h2 className="text-xl font-bold text-white">Agregar Nuevo Servicio</h2>
-                            <p className="mt-1 text-sm text-zinc-300">
-                                Añade un nuevo tipo de servicio a tu catálogo.
-                            </p>
-                        </div>
-                        <form onSubmit={handleAddServiceSubmit} className="p-6">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
-                                <div className="md:col-span-2">
-                                    <label htmlFor="newServiceName" className="block text-sm font-medium text-zinc-300 mb-2">Nombre del Nuevo Servicio</label>
-                                    <input
-                                        type="text"
-                                        id="newServiceName"
-                                        value={newServiceName}
-                                        onChange={e => setNewServiceName(e.target.value)}
-                                        className="focus:ring-white focus:border-white block w-full py-3 px-4 text-base border-zinc-600 bg-zinc-700 text-white rounded-lg"
-                                        placeholder="Ej: Sesión de fotos de producto"
-                                        required
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor="newServicePrice" className="block text-sm font-medium text-zinc-300 mb-2">Costo</label>
-                                    <div className="relative rounded-lg shadow-sm">
-                                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                            <span className="text-zinc-400 text-lg">$</span>
-                                        </div>
-                                        <input
-                                            type="number"
-                                            id="newServicePrice"
-                                            value={newServicePrice}
-                                            onChange={e => setNewServicePrice(e.target.value)}
-                                            className="focus:ring-white focus:border-white block w-full pl-8 pr-4 py-3 text-base border-zinc-600 bg-zinc-700 text-white rounded-lg"
-                                            placeholder="0"
-                                            required
-                                            min="0"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="mt-6 flex justify-end">
-                                <button
-                                    type="submit"
-                                    disabled={isSubmitting}
-                                    className="px-4 py-2 text-sm font-medium text-black bg-white rounded-md shadow-sm hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-zinc-800 focus:ring-white disabled:bg-zinc-400 disabled:cursor-not-allowed"
-                                >
-                                    {isSubmitting ? 'Agregando...' : 'Agregar Servicio'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </React.Fragment>
-        );
-    };
-
-    // --- From App.tsx ---
-    const LoadingSpinner = () => (
-        <div className="flex justify-center items-center h-full">
-            <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-white"></div>
-        </div>
-    );
-
-    const App = () => {
-        const [currentView, setCurrentView] = React.useState(View.DASHBOARD);
-        const [isModalOpen, setIsModalOpen] = React.useState(false);
-        const { isLoading, error } = useApp();
-
-        const openModal = React.useCallback(() => setIsModalOpen(true), []);
-        const closeModal = React.useCallback(() => setIsModalOpen(false), []);
-
-        const renderView = () => {
-            switch (currentView) {
-                case View.DASHBOARD:
-                    return <Dashboard />;
-                case View.FINISHED:
-                    return <FinishedSessions />;
-                case View.CANCELLED:
-                    return <CancelledSessions />;
-                case View.PLANNER:
-                    return <Planner />;
-                case View.SETTINGS:
-                    return <Settings />;
-                default:
-                    return <Dashboard />;
-            }
-        };
-
-        const renderContent = () => {
-            if (isLoading) {
-                return (
-                    <div className="flex flex-col items-center justify-center h-96">
-                        <LoadingSpinner />
-                        <p className="mt-4 text-white text-lg">Cargando datos...</p>
-                    </div>
-                )
-            }
-            if (error) {
-                return (
-                    <div className="p-8 text-center bg-red-900/50 rounded-lg max-w-2xl mx-auto">
-                        <h2 className="text-2xl font-bold text-red-200">¡Oops! Algo salió mal</h2>
-                        <p className="mt-2 text-red-300">No se pudieron cargar los datos.</p>
-                        <p className="mt-4 text-sm font-mono bg-red-900 p-3 rounded-md text-red-200">{error}</p>
-                    </div>
-                )
-            }
-            return renderView();
-        }
-
-        return (
-            <div className="min-h-screen">
-                <NotificationToast />
-                <Header 
-                    currentView={currentView}
-                    setCurrentView={setCurrentView}
-                    onAddSessionClick={openModal} 
+            {isRestoreModalOpen && (
+                <ConfirmationModal
+                    isOpen={isRestoreModalOpen}
+                    onClose={() => setRestoreModalOpen(false)}
+                    onConfirm={handleRestore}
+                    title="Restaurar Sesión"
+                    message="¿Estás seguro de que quieres restaurar esta sesión? Volverá a estar activa."
+                    confirmText="Sí, Restaurar"
+                    confirmButtonColor="bg-green-600 hover:bg-green-700 focus:ring-green-500"
                 />
-                <main className="p-4 sm:p-6 lg:p-8">
-                    {renderContent()}
-                </main>
-                {isModalOpen && <AddSessionModal onClose={closeModal} />}
-            </div>
-        );
-    };
+            )}
 
-    // --- From index.tsx (The final render call) ---
-    const rootElement = document.getElementById('root');
-    const root = ReactDOM.createRoot(rootElement);
-    root.render(
-      <React.StrictMode>
-        <AppProvider>
-          <App />
-        </AppProvider>
-      </React.StrictMode>
+            {isDeleteModalOpen && (
+                <ConfirmationModal
+                    isOpen={isDeleteModalOpen}
+                    onClose={() => setDeleteModalOpen(false)}
+                    onConfirm={handleDelete}
+                    title="Eliminar Sesión Permanentemente"
+                    message={<>¿Estás seguro de que quieres eliminar esta sesión? Esta acción es <strong>irreversible</strong> y también se eliminarán todos los pagos asociados.</>}
+                    confirmText="Sí, Eliminar Permanentemente"
+                    confirmButtonColor="bg-red-600 hover:bg-red-700 focus:ring-red-500"
+                />
+            )}
+        </>
     );
+};
 
-    </script>
-</body>
-</html>
+export default SessionCard;
