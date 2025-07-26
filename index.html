@@ -307,6 +307,31 @@
             setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, status: SessionStatus.ACTIVE } : s)));
         }, []);
 
+        const deleteSession = React.useCallback(async (sessionId) => {
+            const { error: paymentsError } = await supabaseClient
+                .from('payments')
+                .delete()
+                .eq('session_id', sessionId);
+
+            if (paymentsError) {
+                addNotification(`Error al eliminar pagos: ${paymentsError.message}`, 'error');
+                throw paymentsError;
+            }
+
+            const { error: sessionError } = await supabaseClient
+                .from('sessions')
+                .delete()
+                .eq('id', sessionId);
+            
+            if (sessionError) {
+                addNotification(`Error al eliminar sesión: ${sessionError.message}`, 'error');
+                throw sessionError;
+            }
+
+            setSessions(prev => prev.filter(s => s.id !== sessionId));
+            addNotification('Sesión eliminada permanentemente.', 'success');
+        }, [addNotification]);
+
 
         const contextValue = {
             sessions,
@@ -324,6 +349,7 @@
             updateSession,
             cancelSession,
             restoreSession,
+            deleteSession,
         };
 
         return (
@@ -1225,12 +1251,13 @@
     );
 
     const SessionCard = ({ session }) => {
-        const { cancelSession, restoreSession, updateSession, addNotification } = useApp();
+        const { cancelSession, restoreSession, updateSession, addNotification, deleteSession } = useApp();
 
         const [isAddPaymentModalOpen, setAddPaymentModalOpen] = React.useState(false);
         const [isEditModalOpen, setEditModalOpen] = React.useState(false);
         const [isCancelModalOpen, setCancelModalOpen] = React.useState(false);
         const [isRestoreModalOpen, setRestoreModalOpen] = React.useState(false);
+        const [isDeleteModalOpen, setDeleteModalOpen] = React.useState(false);
         const [isEditingNotes, setIsEditingNotes] = React.useState(false);
         const [localNotes, setLocalNotes] = React.useState(session.notes);
         const [isPaymentsVisible, setIsPaymentsVisible] = React.useState(false);
@@ -1238,6 +1265,7 @@
         const notesTextareaRef = React.useRef(null);
 
         const sessionState = React.useMemo(() => getSessionState(session), [session]);
+        const isFinished = sessionState.text === 'Finalizada';
         const totalPaid = React.useMemo(() => session.payments.reduce((sum, p) => sum + Number(p.amount), 0), [session.payments]);
         const remaining = React.useMemo(() => session.price - totalPaid, [session.price, totalPaid]);
         const progress = React.useMemo(() => (session.price > 0 ? (totalPaid / session.price) * 100 : (totalPaid > 0 ? 100 : 0)), [totalPaid, session.price]);
@@ -1254,6 +1282,11 @@
             setRestoreModalOpen(false);
         }, [session.id, restoreSession, addNotification]);
         
+        const handleDelete = React.useCallback(async () => {
+            await deleteSession(session.id);
+            setDeleteModalOpen(false);
+        }, [session.id, deleteSession]);
+
         const handleNotesSave = React.useCallback(async () => {
             if (localNotes !== session.notes) {
                 try {
@@ -1572,14 +1605,23 @@
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h1v-4a1 1 0 011-1h8a1 1 0 011 1v4h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" /></svg>
                         </button>
                         
-                        {session.status === SessionStatus.ACTIVE ? (
+                        {session.status === SessionStatus.ACTIVE && !isFinished && (
                             <button onClick={() => setCancelModalOpen(true)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors" title="Cancelar Sesión">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
                             </button>
-                        ) : (
-                             <button onClick={() => setRestoreModalOpen(true)} className="p-2 text-zinc-400 hover:text-green-500 hover:bg-green-900/50 rounded-full transition-colors" title="Restaurar Sesión">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-10.707a1 1 0 00-1.414-1.414L9 9.586 7.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                            </button>
+                        )}
+                        
+                        {session.status === SessionStatus.CANCELLED && (
+                            <React.Fragment>
+                                <button onClick={() => setRestoreModalOpen(true)} className="p-2 text-zinc-400 hover:text-green-500 hover:bg-green-900/50 rounded-full transition-colors" title="Restaurar Sesión">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-10.707a1 1 0 00-1.414-1.414L9 9.586 7.707 8.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                </button>
+                                 <button onClick={() => setDeleteModalOpen(true)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-900/50 rounded-full transition-colors" title="Eliminar Permanentemente">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </React.Fragment>
                         )}
                     </div>
                 </div>
@@ -1613,6 +1655,18 @@
                         message="¿Estás seguro de que quieres restaurar esta sesión? Volverá a estar activa."
                         confirmText="Sí, Restaurar"
                         confirmButtonColor="bg-green-600 hover:bg-green-700 focus:ring-green-500"
+                    />
+                )}
+
+                {isDeleteModalOpen && (
+                    <ConfirmationModal
+                        isOpen={isDeleteModalOpen}
+                        onClose={() => setDeleteModalOpen(false)}
+                        onConfirm={handleDelete}
+                        title="Eliminar Sesión Permanentemente"
+                        message={<React.Fragment>¿Estás seguro de que quieres eliminar esta sesión? Esta acción es <strong>irreversible</strong> y también se eliminarán todos los pagos asociados.</React.Fragment>}
+                        confirmText="Sí, Eliminar Permanentemente"
+                        confirmButtonColor="bg-red-600 hover:bg-red-700 focus:ring-red-500"
                     />
                 )}
             </React.Fragment>
@@ -1719,7 +1773,13 @@
         const cancelledSessions = React.useMemo(() => {
             return sessions
                 .filter(s => s.status === SessionStatus.CANCELLED)
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                .sort((a, b) => {
+                    // Handle null dates for sorting
+                    if (!a.date && !b.date) return 0;
+                    if (!a.date) return 1;
+                    if (!b.date) return -1;
+                    return new Date(b.date).getTime() - new Date(a.date).getTime()
+                });
         }, [sessions]);
 
         if (cancelledSessions.length === 0) {
