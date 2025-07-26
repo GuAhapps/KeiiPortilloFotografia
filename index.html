@@ -1746,6 +1746,30 @@
     };
     
     // --- From components/Planner.tsx ---
+    const abbreviateService = (serviceName) => {
+        const lowerCaseName = serviceName.toLowerCase();
+        let type = '';
+        if (lowerCaseName.includes('exterior')) {
+            type = 'E.';
+        } else if (lowerCaseName.includes('estudio')) {
+            type = 'S.';
+        }
+
+        const middle = lowerCaseName
+            .replace('sesión', '')
+            .replace(' en ', ' ')
+            .replace('estudio', '')
+            .replace('exterior', '')
+            .trim()
+            .split(' ')
+            .filter(Boolean)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+
+        const result = `S. ${middle} ${type}`;
+        return result.replace(/\s+/g, ' ').trim();
+    };
+
     const Planner = () => {
         const { sessions } = useApp();
         const [currentDate, setCurrentDate] = React.useState(new Date());
@@ -1802,7 +1826,7 @@
         
         for (let day = 1; day <= daysInMonth; day++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const daySessions = sessionsByDate[dateStr] || [];
+            const daySessions = (sessionsByDate[dateStr] || []).sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
             
             const today = new Date();
             const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
@@ -1812,16 +1836,30 @@
                 <div
                     key={day}
                     onClick={() => setSelectedDate(dateStr)}
-                    className={`relative p-2 border-r border-b border-zinc-700 flex flex-col aspect-square cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-zinc-700' : 'hover:bg-zinc-700/50'}`}
+                    className={`relative p-1 border-r border-b border-zinc-700 flex flex-col aspect-square cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-zinc-700' : 'hover:bg-zinc-700/50'}`}
                 >
-                    <div className={`text-sm font-semibold self-start ${isToday ? 'bg-white text-black rounded-full h-6 w-6 flex items-center justify-center' : 'text-zinc-300'}`}>
+                    <div className={`text-sm font-semibold self-start mb-1 ${isToday ? 'bg-white text-black rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0' : 'text-zinc-300'}`}>
                         {day}
                     </div>
-                     {daySessions.length > 0 && (
-                        <div className="absolute top-1.5 right-1.5 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold shadow-md">
+
+                    {/* Mobile View: Counter */}
+                    {daySessions.length > 0 && (
+                        <div className="md:hidden absolute top-1.5 right-1.5 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold shadow-md">
                             {daySessions.length}
                         </div>
                     )}
+                    
+                    {/* Desktop View: Session List */}
+                    <div className="hidden md:flex flex-col flex-grow overflow-y-auto no-scrollbar space-y-1">
+                        {daySessions.map(session => (
+                            <div key={session.id} className="text-xs bg-zinc-900/60 p-1 rounded text-left flex-shrink-0">
+                                <p className="font-semibold text-white truncate leading-tight" title={session.client_name}>{session.client_name}</p>
+                                <p className="text-zinc-400 truncate leading-tight" title={`${session.time || ''} - ${session.service_type}`}>
+                                    {session.time ? `${session.time.substring(0, 5)}hs` : 'Hora pend.'} - {abbreviateService(session.service_type)}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             );
         }
