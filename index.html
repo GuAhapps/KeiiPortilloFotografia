@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>KeiiPortillo - Fotografía</title>
+    <title>Keii Portillo - Fotografía</title>
     <link rel="icon" type="image/jpeg" href="https://archive.org/download/logo-01-02-01/logo-01-02-01.jpg" />
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -456,7 +456,7 @@
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between h-16">
                         <div className="flex items-center space-x-8 flex-1 min-w-0">
-                            <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Keila Portillo Logo" className="h-10 flex-shrink-0" />
+                            <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Keii Portillo Logo" className="h-10 flex-shrink-0" />
                             <nav className="hidden md:flex items-center space-x-4 overflow-x-auto no-scrollbar">
                                 <NavButton label="Sesiones" isActive={currentView === View.DASHBOARD} onClick={() => setCurrentView(View.DASHBOARD)} />
                                 <NavButton label="Finalizadas" isActive={currentView === View.FINISHED} onClick={() => setCurrentView(View.FINISHED)} />
@@ -1378,7 +1378,7 @@
                 <body>
                   <div class="print-container">
                     <div class="header">
-                        <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Logo Keila Portillo">
+                        <img src="https://dn721904.ca.archive.org/0/items/logo-01_202507/logo-01.svg" alt="Logo Keii Portillo">
                         <p>Kaii Portillo Fotografía</p>
                         <p>2477238364</p>
                         <p>@keiiportillo_fotografía</p>
@@ -1749,6 +1749,10 @@
     const Planner = () => {
         const { sessions } = useApp();
         const [currentDate, setCurrentDate] = React.useState(new Date());
+        const [selectedDate, setSelectedDate] = React.useState(() => {
+            const today = new Date();
+            return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        });
 
         const sessionsByDate = React.useMemo(() => {
             return sessions.reduce((acc, session) => {
@@ -1772,6 +1776,18 @@
                 return newDate;
             });
         };
+        
+        const selectedDaySessions = React.useMemo(() => {
+            if (!selectedDate) return [];
+            return (sessionsByDate[selectedDate] || []).sort((a, b) => (a.time || '23:59').localeCompare(b.time || '23:59'));
+        }, [selectedDate, sessionsByDate]);
+
+        const formatSelectedDateHeader = (dateStr) => {
+            if (!dateStr) return '';
+            const date = new Date(dateStr + 'T00:00:00');
+            const formatted = date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+            return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+        };
 
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
@@ -1790,19 +1806,22 @@
             
             const today = new Date();
             const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+            const isSelected = selectedDate === dateStr;
 
             calendarDays.push(
-                <div key={day} className="relative p-2 border-r border-b border-zinc-700 flex flex-col aspect-square">
-                    <div className={`text-sm font-semibold ${isToday ? 'bg-white text-black rounded-full h-6 w-6 flex items-center justify-center' : 'text-zinc-300'}`}>
+                <div
+                    key={day}
+                    onClick={() => setSelectedDate(dateStr)}
+                    className={`relative p-2 border-r border-b border-zinc-700 flex flex-col aspect-square cursor-pointer transition-colors duration-200 ${isSelected ? 'bg-zinc-700' : 'hover:bg-zinc-700/50'}`}
+                >
+                    <div className={`text-sm font-semibold self-start ${isToday ? 'bg-white text-black rounded-full h-6 w-6 flex items-center justify-center' : 'text-zinc-300'}`}>
                         {day}
                     </div>
-                    <div className="mt-1 space-y-1 overflow-y-auto flex-grow">
-                        {daySessions.map(session => (
-                             <div key={session.id} className="text-xs bg-black text-white p-1.5 rounded-md truncate" title={`${session.client_name} - ${session.service_type}`}>
-                                {session.client_name}
-                            </div>
-                        ))}
-                    </div>
+                     {daySessions.length > 0 && (
+                        <div className="absolute top-1.5 right-1.5 bg-blue-600 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold shadow-md">
+                            {daySessions.length}
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -1814,17 +1833,16 @@
             calendarDays.push(<div key={`blank-end-${calendarDays.length}`} className="border-r border-b border-zinc-700 bg-zinc-900/50 aspect-square"></div>);
         }
 
-
         return (
             <div className="bg-zinc-800 rounded-lg shadow-2xl overflow-hidden">
                 <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-zinc-700" aria-label="Mes anterior">
+                    <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-zinc-700 transition-colors" aria-label="Mes anterior">
                         <svg className="w-6 h-6 text-zinc-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
                     </button>
                     <h2 className="text-lg font-bold text-white capitalize">
                         {currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
                     </h2>
-                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-zinc-700" aria-label="Mes siguiente">
+                    <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-zinc-700 transition-colors" aria-label="Mes siguiente">
                         <svg className="w-6 h-6 text-zinc-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
                     </button>
                 </div>
@@ -1837,6 +1855,37 @@
 
                 <div className="grid grid-cols-7">
                     {calendarDays}
+                </div>
+
+                <div className="p-4 sm:p-6 border-t border-zinc-700">
+                    <h3 className="text-lg font-bold text-white">
+                        {selectedDate ? `Detalles para el ${formatSelectedDateHeader(selectedDate)}` : 'Selecciona un día'}
+                    </h3>
+                    <div className="mt-4 space-y-3">
+                        {selectedDaySessions.length > 0 ? (
+                            selectedDaySessions.map(session => {
+                                const dayName = new Date(session.date + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'long' });
+                                const dayNumber = new Date(session.date + 'T00:00:00').getDate();
+                                const formattedDay = `${dayName.charAt(0).toUpperCase() + dayName.slice(1)} ${dayNumber}`;
+                                
+                                const fullText = `${formattedDay} - ${session.time ? session.time + 'hs' : 'Hora pendiente'} - ${session.service_type} - ${session.location} - ${session.client_name}`;
+
+                                return (
+                                    <div key={session.id} className="bg-zinc-900/70 p-3 rounded-lg text-sm text-white" title={fullText}>
+                                       <p className="font-semibold text-white truncate">{session.client_name}</p>
+                                       <p className="text-zinc-400 truncate">{`${session.time ? session.time + 'hs' : 'Hora pendiente'} - ${session.service_type}`}</p>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <div className="text-center py-6">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-10 w-10 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0h18M12 12.75h.008v.008H12v-.008z" />
+                                </svg>
+                                <p className="mt-2 text-zinc-400 italic">No hay sesiones para el día seleccionado.</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         );
